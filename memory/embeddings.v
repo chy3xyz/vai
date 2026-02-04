@@ -4,7 +4,6 @@ module memory
 
 import net.http
 import json
-import llm
 import math
 
 // Embedder 嵌入生成器接口
@@ -17,28 +16,28 @@ pub interface Embedder {
 
 // OllamaEmbedder 使用 Ollama 生成嵌入
 pub struct OllamaEmbedder {
-	pub mut:
-		model      string = 'nomic-embed-text'
-		base_url   string = 'http://localhost:11434'
+pub mut:
+	model    string = 'nomic-embed-text'
+	base_url string = 'http://localhost:11434'
 }
 
 // OllamaEmbeddingRequest 嵌入请求
 pub struct OllamaEmbeddingRequest {
-	pub:
-		model string @[json: 'model']
-		prompt string @[json: 'prompt']
+pub:
+	model  string @[json: 'model']
+	prompt string @[json: 'prompt']
 }
 
 // OllamaEmbeddingResponse 嵌入响应
 pub struct OllamaEmbeddingResponse {
-	pub:
-		embedding []f32 @[json: 'embedding']
+pub:
+	embedding []f32 @[json: 'embedding']
 }
 
 // 创建 Ollama 嵌入生成器
 pub fn new_ollama_embedder(model string) OllamaEmbedder {
 	return OllamaEmbedder{
-		model: model
+		model:    model
 		base_url: 'http://localhost:11434'
 	}
 }
@@ -46,25 +45,25 @@ pub fn new_ollama_embedder(model string) OllamaEmbedder {
 // 生成单条文本嵌入
 pub fn (mut e OllamaEmbedder) embed(text string) ![]f32 {
 	req := OllamaEmbeddingRequest{
-		model: e.model
+		model:  e.model
 		prompt: text
 	}
-	
+
 	json_body := json.encode(req)
-	
+
 	resp := http.fetch(
-		url: '${e.base_url}/api/embeddings'
+		url:    '${e.base_url}/api/embeddings'
 		method: .post
 		header: http.new_header_from_map({
 			.content_type: 'application/json'
 		})
-		data: json_body
+		data:   json_body
 	)!
-	
+
 	if resp.status_code != 200 {
 		return error('embedding API error: ${resp.status_code}')
 	}
-	
+
 	embed_resp := json.decode(OllamaEmbeddingResponse, resp.body)!
 	return embed_resp.embedding
 }
@@ -72,12 +71,12 @@ pub fn (mut e OllamaEmbedder) embed(text string) ![]f32 {
 // 批量生成嵌入
 pub fn (mut e OllamaEmbedder) embed_batch(texts []string) ![][]f32 {
 	mut results := [][]f32{}
-	
+
 	for text in texts {
 		embedding := e.embed(text)!
 		results << embedding
 	}
-	
+
 	return results
 }
 
@@ -100,55 +99,55 @@ pub fn (e &OllamaEmbedder) dimension() int {
 
 // OpenAIEmbedder 使用 OpenAI API 生成嵌入
 pub struct OpenAIEmbedder {
-	pub mut:
-		model      string = 'text-embedding-3-small'
-		api_key    string
-		base_url   string = 'https://api.openai.com/v1'
+pub mut:
+	model    string = 'text-embedding-3-small'
+	api_key  string
+	base_url string = 'https://api.openai.com/v1'
 }
 
 // OpenAIEmbeddingRequest 嵌入请求
 pub struct OpenAIEmbeddingRequest {
-	pub:
-		model string @[json: 'model']
-		input string @[json: 'input']
+pub:
+	model string @[json: 'model']
+	input string @[json: 'input']
 }
 
 // OpenAIEmbeddingBatchRequest 批量嵌入请求
 pub struct OpenAIEmbeddingBatchRequest {
-	pub:
-		model string   @[json: 'model']
-		input []string @[json: 'input']
+pub:
+	model string   @[json: 'model']
+	input []string @[json: 'input']
 }
 
 // OpenAIEmbeddingResponse 嵌入响应
 pub struct OpenAIEmbeddingResponse {
-	pub:
-		object string @[json: 'object']
-		data   []EmbeddingData @[json: 'data']
-		model  string @[json: 'model']
-		usage  EmbeddingUsage @[json: 'usage']
+pub:
+	object string          @[json: 'object']
+	data   []EmbeddingData @[json: 'data']
+	model  string          @[json: 'model']
+	usage  EmbeddingUsage  @[json: 'usage']
 }
 
 // EmbeddingData 嵌入数据
 pub struct EmbeddingData {
-	pub:
-		object    string @[json: 'object']
-		embedding []f32  @[json: 'embedding']
-		index     int    @[json: 'index']
+pub:
+	object    string @[json: 'object']
+	embedding []f32  @[json: 'embedding']
+	index     int    @[json: 'index']
 }
 
 // EmbeddingUsage 用量统计
 pub struct EmbeddingUsage {
-	pub:
-		prompt_tokens int @[json: 'prompt_tokens']
-		total_tokens  int @[json: 'total_tokens']
+pub:
+	prompt_tokens int @[json: 'prompt_tokens']
+	total_tokens  int @[json: 'total_tokens']
 }
 
 // 创建 OpenAI 嵌入生成器
 pub fn new_openai_embedder(api_key string, model string) OpenAIEmbedder {
 	return OpenAIEmbedder{
-		model: model
-		api_key: api_key
+		model:    model
+		api_key:  api_key
 		base_url: 'https://api.openai.com/v1'
 	}
 }
@@ -159,29 +158,29 @@ pub fn (mut e OpenAIEmbedder) embed(text string) ![]f32 {
 		model: e.model
 		input: text
 	}
-	
+
 	json_body := json.encode(req)
-	
+
 	resp := http.fetch(
-		url: '${e.base_url}/embeddings'
+		url:    '${e.base_url}/embeddings'
 		method: .post
 		header: http.new_header_from_map({
-			.content_type: 'application/json'
+			.content_type:  'application/json'
 			.authorization: 'Bearer ${e.api_key}'
 		})
-		data: json_body
+		data:   json_body
 	)!
-	
+
 	if resp.status_code != 200 {
 		return error('embedding API error: ${resp.status_code}')
 	}
-	
+
 	embed_resp := json.decode(OpenAIEmbeddingResponse, resp.body)!
-	
+
 	if embed_resp.data.len == 0 {
 		return error('no embedding data in response')
 	}
-	
+
 	return embed_resp.data[0].embedding
 }
 
@@ -192,30 +191,30 @@ pub fn (mut e OpenAIEmbedder) embed_batch(texts []string) ![][]f32 {
 		model: e.model
 		input: texts
 	}
-	
+
 	json_body := json.encode(req)
-	
+
 	resp := http.fetch(
-		url: '${e.base_url}/embeddings'
+		url:    '${e.base_url}/embeddings'
 		method: .post
 		header: http.new_header_from_map({
-			.content_type: 'application/json'
+			.content_type:  'application/json'
 			.authorization: 'Bearer ${e.api_key}'
 		})
-		data: json_body
+		data:   json_body
 	)!
-	
+
 	if resp.status_code != 200 {
 		return error('embedding API error: ${resp.status_code}')
 	}
-	
+
 	embed_resp := json.decode(OpenAIEmbeddingResponse, resp.body)!
-	
+
 	mut results := [][]f32{}
 	for data in embed_resp.data {
 		results << data.embedding
 	}
-	
+
 	return results
 }
 
@@ -236,25 +235,25 @@ pub fn (e &OpenAIEmbedder) dimension() int {
 
 // SimpleMemoryIndex 简单的内存向量索引
 pub struct SimpleMemoryIndex {
-	pub mut:
-		embedder  Embedder
-		store     Store
-		dimension int
+pub mut:
+	embedder  Embedder
+	store     Store
+	dimension int
 }
 
 // Document 文档
 pub struct Document {
-	pub:
-		id      string
-		content string
-		metadata map[string]string
+pub:
+	id       string
+	content  string
+	metadata map[string]string
 }
 
 // 创建简单内存索引
 pub fn new_simple_index(embedder Embedder, store Store) SimpleMemoryIndex {
 	return SimpleMemoryIndex{
-		embedder: embedder
-		store: store
+		embedder:  embedder
+		store:     store
 		dimension: embedder.dimension()
 	}
 }
@@ -263,11 +262,11 @@ pub fn new_simple_index(embedder Embedder, store Store) SimpleMemoryIndex {
 pub fn (mut idx SimpleMemoryIndex) add_document(doc Document) ! {
 	// 生成嵌入
 	embedding := idx.embedder.embed(doc.content)!
-	
+
 	// 存储向量
 	mut metadata := doc.metadata.clone()
 	metadata['content'] = doc.content
-	
+
 	idx.store.store_vector(doc.id, embedding, metadata)!
 }
 
@@ -278,7 +277,7 @@ pub fn (mut idx SimpleMemoryIndex) search(query string, top_k int) []VectorSearc
 		eprintln('Failed to generate query embedding: ${err}')
 		return []
 	}
-	
+
 	// 搜索向量
 	return idx.store.search_vectors(query_embedding, top_k)
 }
@@ -296,17 +295,17 @@ pub fn normalize_vector(vector []f32) []f32 {
 	for v in vector {
 		sum += v * v
 	}
-	
+
 	if sum == 0.0 {
 		return vector.clone()
 	}
-	
+
 	norm := f32(math.sqrt(f64(sum)))
 	mut result := []f32{cap: vector.len}
 	for v in vector {
 		result << v / norm
 	}
-	
+
 	return result
 }
 
@@ -315,20 +314,20 @@ pub fn cosine_similarity(a []f32, b []f32) f32 {
 	if a.len != b.len {
 		return 0.0
 	}
-	
+
 	mut dot_product := f32(0.0)
 	mut norm_a := f32(0.0)
 	mut norm_b := f32(0.0)
-	
+
 	for i in 0 .. a.len {
 		dot_product += a[i] * b[i]
 		norm_a += a[i] * a[i]
 		norm_b += b[i] * b[i]
 	}
-	
+
 	if norm_a == 0.0 || norm_b == 0.0 {
 		return 0.0
 	}
-	
+
 	return dot_product / (f32(math.sqrt(f64(norm_a))) * f32(math.sqrt(f64(norm_b))))
 }

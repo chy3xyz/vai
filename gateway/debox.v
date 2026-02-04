@@ -3,131 +3,130 @@
 // 参考: https://github.com/debox-pro/debox-chat-go-sdk
 module gateway
 
-import protocol { Message, MessageType, MessageRole, new_text_message, new_event_message, TextContent }
+import protocol { Message, MessageType, TextContent }
 import net.http
 import json
 import time
 import crypto.hmac
 import crypto.sha256
 
-
 // DeBoxAdapter DeBox 适配器
 pub struct DeBoxAdapter {
 	BaseAdapter
-	pub mut:
-		app_id       string
-		app_secret   string
-		api_base     string
-		access_token string
-		token_expire i64  // 令牌过期时间
-		bot_info     DeBoxBotInfo
+pub mut:
+	app_id       string
+	app_secret   string
+	api_base     string
+	access_token string
+	token_expire i64 // 令牌过期时间
+	bot_info     DeBoxBotInfo
 }
 
 // DeBoxBotInfo DeBox 机器人信息
 pub struct DeBoxBotInfo {
-	pub:
-		id          string @[json: 'id']
-		name        string @[json: 'name']
-		avatar      string @[json: 'avatar']
-		description string @[json: 'description']
-		group_count int    @[json: 'group_count']
-		user_count  int    @[json: 'user_count']
+pub:
+	id          string @[json: 'id']
+	name        string @[json: 'name']
+	avatar      string @[json: 'avatar']
+	description string @[json: 'description']
+	group_count int    @[json: 'group_count']
+	user_count  int    @[json: 'user_count']
 }
 
 // DeBoxUser DeBox 用户信息
 pub struct DeBoxUser {
-	pub:
-		id         string @[json: 'id']
-		nickname   string @[json: 'nickname']
-		avatar     string @[json: 'avatar']
-		address    string @[json: 'address']  // Web3 钱包地址
-		is_follow  bool   @[json: 'is_follow']
-		is_block   bool   @[json: 'is_block']
+pub:
+	id        string @[json: 'id']
+	nickname  string @[json: 'nickname']
+	avatar    string @[json: 'avatar']
+	address   string @[json: 'address'] // Web3 钱包地址
+	is_follow bool   @[json: 'is_follow']
+	is_block  bool   @[json: 'is_block']
 }
 
 // DeBoxGroup DeBox 群组
 pub struct DeBoxGroup {
-	pub:
-		id          string @[json: 'id']
-		name        string @[json: 'name']
-		icon        string @[json: 'icon']
-		description string @[json: 'description']
-		owner_id    string @[json: 'owner_id']
-		member_count int   @[json: 'member_count']
-		max_members int   @[json: 'max_members']
-		is_private  bool  @[json: 'is_private']
-		created_at  i64   @[json: 'created_at']
+pub:
+	id           string @[json: 'id']
+	name         string @[json: 'name']
+	icon         string @[json: 'icon']
+	description  string @[json: 'description']
+	owner_id     string @[json: 'owner_id']
+	member_count int    @[json: 'member_count']
+	max_members  int    @[json: 'max_members']
+	is_private   bool   @[json: 'is_private']
+	created_at   i64    @[json: 'created_at']
 }
 
 // DeBoxMessage DeBox 消息格式
 pub struct DeBoxMessage {
-	pub:
-		id          string @[json: 'id']
-		group_id    string @[json: 'group_id']
-		channel_id  string @[json: 'channel_id']
-		author      DeBoxUser @[json: 'author']
-		content     string @[json: 'content']
-		type_       int    @[json: 'type']  // 1: 文本, 2: 图片, 3: 音频, 4: 视频, 5: 文件, 6: 系统
-		status      int    @[json: 'status']  // 0: 正常, 1: 已撤回
-		timestamp   i64    @[json: 'timestamp']
-		reply_to    ?string @[json: 'reply_to'; omitempty]
-		ext         string @[json: 'ext']  // 扩展字段
+pub:
+	id         string    @[json: 'id']
+	group_id   string    @[json: 'group_id']
+	channel_id string    @[json: 'channel_id']
+	author     DeBoxUser @[json: 'author']
+	content    string    @[json: 'content']
+	type_      int       @[json: 'type']   // 1: 文本, 2: 图片, 3: 音频, 4: 视频, 5: 文件, 6: 系统
+	status     int       @[json: 'status'] // 0: 正常, 1: 已撤回
+	timestamp  i64       @[json: 'timestamp']
+	reply_to   ?string   @[json: 'reply_to'; omitempty]
+	ext        string    @[json: 'ext'] // 扩展字段
 }
 
 // DeBoxSendRequest 发送消息请求
 pub struct DeBoxSendRequest {
-	pub:
-		group_id   string @[json: 'group_id']
-		channel_id string @[json: 'channel_id']
-		content    string @[json: 'content']
-		type_      int    @[json: 'type']
-		reply_to   ?string @[json: 'reply_to'; omitempty]
+pub:
+	group_id   string  @[json: 'group_id']
+	channel_id string  @[json: 'channel_id']
+	content    string  @[json: 'content']
+	type_      int     @[json: 'type']
+	reply_to   ?string @[json: 'reply_to'; omitempty]
 }
 
 // DeBoxAPIResponse API 响应
 pub struct DeBoxAPIResponse {
-	pub:
-		code    int    @[json: 'code']
-		msg     string @[json: 'msg']
-		data    string @[json: 'data']  // Raw JSON data
-	}
+pub:
+	code int    @[json: 'code']
+	msg  string @[json: 'msg']
+	data string @[json: 'data'] // Raw JSON data
+}
 
 // DeBoxTokenResponse 令牌响应
 pub struct DeBoxTokenResponse {
-	pub:
-		access_token string @[json: 'access_token']
-		expires_in   int    @[json: 'expires_in']
-		token_type   string @[json: 'token_type']
+pub:
+	access_token string @[json: 'access_token']
+	expires_in   int    @[json: 'expires_in']
+	token_type   string @[json: 'token_type']
 }
 
 // DeBoxWebhookBody Webhook 回调体
 pub struct DeBoxWebhookBody {
-	pub:
-		event     string @[json: 'event']
-		timestamp i64    @[json: 'timestamp']
-		sign      string @[json: 'sign']
-		data      string @[json: 'data']
+pub:
+	event     string @[json: 'event']
+	timestamp i64    @[json: 'timestamp']
+	sign      string @[json: 'sign']
+	data      string @[json: 'data']
 }
 
 // DeBoxMessageEvent 消息事件
 pub struct DeBoxMessageEvent {
-	pub:
-		message DeBoxMessage @[json: 'message']
-		group   DeBoxGroup   @[json: 'group']
+pub:
+	message DeBoxMessage @[json: 'message']
+	group   DeBoxGroup   @[json: 'group']
 }
 
 // 创建 DeBox 适配器
 pub fn new_debox_adapter(app_id string, app_secret string) &DeBoxAdapter {
 	return &DeBoxAdapter{
-		BaseAdapter: new_base_adapter('debox', AdapterConfig{
-			api_key: app_id
-			api_secret: app_secret
-			timeout_ms: 30000
+		BaseAdapter:  new_base_adapter('debox', AdapterConfig{
+			api_key:     app_id
+			api_secret:  app_secret
+			timeout_ms:  30000
 			retry_count: 3
 		})
-		app_id: app_id
-		app_secret: app_secret
-		api_base: 'https://open.debox.pro/openapi/v1'
+		app_id:       app_id
+		app_secret:   app_secret
+		api_base:     'https://open.debox.pro/openapi/v1'
 		access_token: ''
 		token_expire: 0
 	}
@@ -144,10 +143,10 @@ pub fn new_debox_adapter_with_base(app_id string, app_secret string, api_base st
 pub fn (mut a DeBoxAdapter) connect() ! {
 	// 获取访问令牌
 	a.refresh_token()!
-	
+
 	// 加载 Bot 信息
 	a.load_bot_info()!
-	
+
 	a.connected = true
 	println('Connected to DeBox as bot: ${a.bot_info.name}')
 }
@@ -155,18 +154,18 @@ pub fn (mut a DeBoxAdapter) connect() ! {
 // 刷新访问令牌
 fn (mut a DeBoxAdapter) refresh_token() ! {
 	timestamp := time.now().unix()
-	
+
 	// 构造签名
 	sign_str := '${a.app_id}${timestamp}'
 	signature := a.generate_sign(sign_str)
-	
+
 	// 请求令牌
 	params := {
-		'app_id': a.app_id
+		'app_id':    a.app_id
 		'timestamp': timestamp.str()
-		'sign': signature
+		'sign':      signature
 	}
-	
+
 	mut form_data := ''
 	for key, value in params {
 		if form_data.len > 0 {
@@ -174,28 +173,28 @@ fn (mut a DeBoxAdapter) refresh_token() ! {
 		}
 		form_data += '${key}=${value}'
 	}
-	
+
 	mut req := http.new_request(.post, '${a.api_base}/auth/token', form_data)
 	req.header.add(.content_type, 'application/x-www-form-urlencoded')
-	
+
 	resp := http.fetch(url: req.url, method: .post, header: req.header, data: req.data)!
-	
+
 	if resp.status_code != 200 {
 		return error('DeBox auth failed: ${resp.status_code}')
 	}
-	
+
 	api_resp := json.decode(DeBoxAPIResponse, resp.body)!
-	
+
 	if api_resp.code != 0 {
 		return error('DeBox auth error: ${api_resp.msg}')
 	}
-	
+
 	token_data := api_resp.data
 	token_resp := json.decode(DeBoxTokenResponse, token_data)!
-	
+
 	a.access_token = token_resp.access_token
 	a.token_expire = time.now().unix() + token_resp.expires_in
-	
+
 	// 更新配置
 	a.config.api_key = a.access_token
 }
@@ -215,22 +214,22 @@ fn (mut a DeBoxAdapter) ensure_token() ! {
 // 加载 Bot 信息
 fn (mut a DeBoxAdapter) load_bot_info() ! {
 	a.ensure_token()!
-	
+
 	mut req := http.new_request(.get, '${a.api_base}/bot/info', '')
 	req.header.add(.authorization, 'Bearer ${a.access_token}')
-	
+
 	resp := http.fetch(url: req.url, method: .post, header: req.header, data: req.data)!
-	
+
 	if resp.status_code != 200 {
 		return error('failed to load bot info: ${resp.status_code}')
 	}
-	
+
 	api_resp := json.decode(DeBoxAPIResponse, resp.body)!
-	
+
 	if api_resp.code != 0 {
 		return error('API error: ${api_resp.msg}')
 	}
-	
+
 	bot_data := api_resp.data
 	a.bot_info = json.decode(DeBoxBotInfo, bot_data)!
 }
@@ -245,38 +244,38 @@ pub fn (mut a DeBoxAdapter) send_message(msg Message) ! {
 	if !a.connected {
 		return error('not connected to DeBox')
 	}
-	
+
 	a.ensure_token()!
-	
+
 	// 解析 receiver_id 格式: "group_id:channel_id"
 	group_id := msg.receiver_id
-	channel_id := '1'  // 默认频道
-	
+	channel_id := '1' // 默认频道
+
 	// 获取文本内容
 	content := msg.text() or { '' }
-	
+
 	send_req := DeBoxSendRequest{
-		group_id: group_id
+		group_id:   group_id
 		channel_id: channel_id
-		content: content
-		type_: 1  // 文本消息
-		reply_to: msg.reply_to
+		content:    content
+		type_:      1 // 文本消息
+		reply_to:   msg.reply_to
 	}
-	
+
 	json_body := json.encode(send_req)
-	
+
 	mut req := http.new_request(.post, '${a.api_base}/message/send', json_body)
 	req.header.add(.content_type, 'application/json')
 	req.header.add(.authorization, 'Bearer ${a.access_token}')
-	
+
 	resp := http.fetch(url: req.url, method: .post, header: req.header, data: req.data)!
-	
+
 	if resp.status_code != 200 {
 		return error('failed to send message: ${resp.status_code}')
 	}
-	
+
 	api_resp := json.decode(DeBoxAPIResponse, resp.body)!
-	
+
 	if api_resp.code != 0 {
 		return error('API error: ${api_resp.msg}')
 	}
@@ -287,37 +286,37 @@ pub fn (mut a DeBoxAdapter) receive_message() !Message {
 	if !a.connected {
 		return error('not connected to DeBox')
 	}
-	
+
 	a.ensure_token()!
-	
+
 	// 获取消息列表
 	mut req := http.new_request(.get, '${a.api_base}/message/receive', '')
 	req.header.add(.authorization, 'Bearer ${a.access_token}')
-	
+
 	resp := http.fetch(url: req.url, method: .post, header: req.header, data: req.data)!
-	
+
 	if resp.status_code != 200 {
 		return error('poll failed: ${resp.status_code}')
 	}
-	
+
 	api_resp := json.decode(DeBoxAPIResponse, resp.body)!
-	
+
 	if api_resp.code != 0 {
 		return error('API error: ${api_resp.msg}')
 	}
-	
+
 	// For V 0.5, parse the JSON data directly
 	// Parse first message from JSON array
-	if api_resp.data.len < 3 {  // Empty array "[]"
+	if api_resp.data.len < 3 { // Empty array "[]"
 		return error('no new messages')
 	}
-	
+
 	// Simple parsing: extract first object from array
 	data_trimmed := api_resp.data.trim_space()
 	if !data_trimmed.starts_with('[') {
 		return error('invalid messages data format')
 	}
-	
+
 	// For now, return a placeholder message
 	// Full implementation would properly parse the JSON array
 	return error('no new messages')
@@ -326,31 +325,31 @@ pub fn (mut a DeBoxAdapter) receive_message() !Message {
 // 获取用户信息
 pub fn (mut a DeBoxAdapter) get_user_info(user_id string) !UserInfo {
 	a.ensure_token()!
-	
+
 	mut req := http.new_request(.get, '${a.api_base}/user/info?user_id=${user_id}', '')
 	req.header.add(.authorization, 'Bearer ${a.access_token}')
-	
+
 	resp := http.fetch(url: req.url, method: .post, header: req.header, data: req.data)!
-	
+
 	if resp.status_code != 200 {
 		return error('failed to get user info: ${resp.status_code}')
 	}
-	
+
 	api_resp := json.decode(DeBoxAPIResponse, resp.body)!
-	
+
 	if api_resp.code != 0 {
 		return error('API error: ${api_resp.msg}')
 	}
-	
+
 	user_data := api_resp.data.str()
 	user := json.decode(DeBoxUser, user_data)!
-	
+
 	return UserInfo{
-		id: user.id
-		username: user.nickname
+		id:           user.id
+		username:     user.nickname
 		display_name: user.nickname
-		avatar_url: user.avatar
-		is_bot: false
+		avatar_url:   user.avatar
+		is_bot:       false
 	}
 }
 
@@ -366,21 +365,21 @@ fn (a &DeBoxAdapter) convert_to_message(debox_msg DeBoxMessage) Message {
 		6 { msg_type = .event }
 		else {}
 	}
-	
+
 	return Message{
-		id: debox_msg.id
-		msg_type: msg_type
-		role: if debox_msg.author.id == a.bot_info.id { .assistant } else { .user }
-		content: TextContent{
-			text: debox_msg.content
+		id:              debox_msg.id
+		msg_type:        msg_type
+		role:            if debox_msg.author.id == a.bot_info.id { .assistant } else { .user }
+		content:         TextContent{
+			text:   debox_msg.content
 			format: 'plain'
 		}
-		metadata: map[string]string{}
-		timestamp: time.unix(int(debox_msg.timestamp / 1000))  // DeBox 使用毫秒时间戳
-		sender_id: debox_msg.author.id
-		receiver_id: debox_msg.group_id
-		reply_to: debox_msg.reply_to
-		platform: 'debox'
+		metadata:        map[string]string{}
+		timestamp:       time.unix(int(debox_msg.timestamp / 1000)) // DeBox 使用毫秒时间戳
+		sender_id:       debox_msg.author.id
+		receiver_id:     debox_msg.group_id
+		reply_to:        debox_msg.reply_to
+		platform:        'debox'
 		conversation_id: debox_msg.group_id
 	}
 }
@@ -388,54 +387,55 @@ fn (a &DeBoxAdapter) convert_to_message(debox_msg DeBoxMessage) Message {
 // 获取群组列表
 pub fn (mut a DeBoxAdapter) list_groups() ![]DeBoxGroup {
 	a.ensure_token()!
-	
+
 	mut req := http.new_request(.get, '${a.api_base}/group/list', '')
 	req.header.add(.authorization, 'Bearer ${a.access_token}')
-	
+
 	resp := http.fetch(url: req.url, method: .post, header: req.header, data: req.data)!
-	
+
 	if resp.status_code != 200 {
 		return error('failed to list groups: ${resp.status_code}')
 	}
-	
+
 	api_resp := json.decode(DeBoxAPIResponse, resp.body)!
-	
+
 	if api_resp.code != 0 {
 		return error('API error: ${api_resp.msg}')
 	}
-	
+
 	mut groups := []DeBoxGroup{}
 	// For V 0.5, JSON parsing needs different approach
 	// TODO: Implement proper JSON array parsing
-	_ := api_resp.data  // Suppress unused warning
-	
+	_ := api_resp.data // Suppress unused warning
+
 	return groups
 }
 
 // 获取群组成员
 pub fn (mut a DeBoxAdapter) get_group_members(group_id string) ![]DeBoxUser {
 	a.ensure_token()!
-	
-	mut req := http.new_request(.get, '${a.api_base}/group/members?group_id=${group_id}', '')
+
+	mut req := http.new_request(.get, '${a.api_base}/group/members?group_id=${group_id}',
+		'')
 	req.header.add(.authorization, 'Bearer ${a.access_token}')
-	
+
 	resp := http.fetch(url: req.url, method: .post, header: req.header, data: req.data)!
-	
+
 	if resp.status_code != 200 {
 		return error('failed to get group members: ${resp.status_code}')
 	}
-	
+
 	api_resp := json.decode(DeBoxAPIResponse, resp.body)!
-	
+
 	if api_resp.code != 0 {
 		return error('API error: ${api_resp.msg}')
 	}
-	
+
 	mut members := []DeBoxUser{}
 	// For V 0.5, JSON parsing needs different approach
 	// TODO: Implement proper JSON array parsing
-	_ := api_resp.data  // Suppress unused warning
-	
+	_ := api_resp.data // Suppress unused warning
+
 	return members
 }
 
@@ -451,11 +451,9 @@ pub fn (a &DeBoxAdapter) parse_webhook_event(body string) !DeBoxWebhookBody {
 }
 
 // 消息类型常量
-pub const (
-	msg_type_text  = 1
-	msg_type_image = 2
-	msg_type_audio = 3
-	msg_type_video = 4
-	msg_type_file  = 5
-	msg_type_system = 6
-)
+pub const msg_type_text = 1
+pub const msg_type_image = 2
+pub const msg_type_audio = 3
+pub const msg_type_video = 4
+pub const msg_type_file = 5
+pub const msg_type_system = 6

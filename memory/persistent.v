@@ -6,23 +6,22 @@ import protocol
 import json
 import os
 import time
-import math
 
 // VectorScore 向量相似度分数（用于内部排序）
 pub struct VectorScore {
-	pub:
-		id    string
-		score f32
+pub:
+	id    string
+	score f32
 }
 
-// PersistentStore 持久化存储（简化内存版）
+// PersistentStore 持久化存储（内存版 - 注意：当前为内存实现，重启后数据会丢失）
 @[heap]
 pub struct PersistentStore {
-	pub mut:
-		db_path        string
-		conversations  map[string]protocol.Conversation
-		messages       map[string][]protocol.Message
-		vectors        map[string]VectorData
+pub mut:
+	db_path       string
+	conversations map[string]protocol.Conversation
+	messages      map[string][]protocol.Message
+	vectors       map[string]VectorData
 }
 
 struct VectorData {
@@ -35,22 +34,20 @@ pub fn new_persistent_store(db_path string) !PersistentStore {
 	// 确保目录存在
 	dir := os.dir(db_path)
 	if !os.is_dir(dir) {
-		os.mkdir_all(dir) or {
-			return error('failed to create directory: ${err}')
-		}
+		os.mkdir_all(dir) or { return error('failed to create directory: ${err}') }
 	}
-	
+
 	mut store := PersistentStore{
-		db_path: db_path
+		db_path:       db_path
 		conversations: map[string]protocol.Conversation{}
-		messages: map[string][]protocol.Message{}
-		vectors: map[string]VectorData{}
+		messages:      map[string][]protocol.Message{}
+		vectors:       map[string]VectorData{}
 	}
-	
+
 	return store
 }
 
-// 初始化数据库表（简化版，无需操作）
+// 初始化数据库表（内存版无需操作）
 fn (mut s PersistentStore) init_schema() {}
 
 // 创建会话
@@ -59,17 +56,17 @@ pub fn (mut s PersistentStore) create_conversation(id string) !protocol.Conversa
 	if id in s.conversations {
 		return error('conversation already exists: ${id}')
 	}
-	
+
 	now := time.now()
 	conv := protocol.Conversation{
-		id: id
-		messages: []
+		id:           id
+		messages:     []
 		participants: []
-		created_at: now
-		updated_at: now
-		metadata: map[string]string{}
+		created_at:   now
+		updated_at:   now
+		metadata:     map[string]string{}
 	}
-	
+
 	s.conversations[id] = conv
 	return conv
 }
@@ -110,7 +107,7 @@ pub fn (mut s PersistentStore) add_message(conversation_id string, msg protocol.
 	mut msgs := s.messages[conversation_id]
 	msgs << msg
 	s.messages[conversation_id] = msgs
-	
+
 	// 更新会话时间
 	if mut conv := s.conversations[conversation_id] {
 		conv.updated_at = time.now()
@@ -129,7 +126,7 @@ pub fn (mut s PersistentStore) get_messages(conversation_id string, limit int) [
 	return []
 }
 
-// 搜索消息（简单实现）
+// 搜索消息
 pub fn (mut s PersistentStore) search_messages(conversation_id string, query string, limit int) []protocol.Message {
 	mut results := []protocol.Message{}
 	if msgs := s.messages[conversation_id] {
@@ -151,23 +148,26 @@ pub fn (mut s PersistentStore) search_messages(conversation_id string, query str
 // 存储向量
 pub fn (mut s PersistentStore) store_vector(id string, vector []f32, metadata map[string]string) ! {
 	s.vectors[id] = VectorData{
-		vector: vector
+		vector:   vector
 		metadata: metadata
 	}
 }
 
-// 搜索向量（简化实现）
+// 搜索向量
 pub fn (mut s PersistentStore) search_vectors(query_vector []f32, top_k int) []VectorSearchResult {
 	mut scores := []VectorScore{}
-	
+
 	for id, data in s.vectors {
-		score := cosine_similarity(query_vector, data.vector)
-		scores << VectorScore{id: id, score: score}
+		score := compute_cosine_similarity(query_vector, data.vector)
+		scores << VectorScore{
+			id:    id
+			score: score
+		}
 	}
-	
+
 	// 排序
 	scores.sort(a.score > b.score)
-	
+
 	mut results := []VectorSearchResult{}
 	for i, item in scores {
 		if i >= top_k {
@@ -175,17 +175,17 @@ pub fn (mut s PersistentStore) search_vectors(query_vector []f32, top_k int) []V
 		}
 		if vec_data := s.vectors[item.id] {
 			results << VectorSearchResult{
-				id: item.id
-				score: item.score
+				id:       item.id
+				score:    item.score
 				metadata: vec_data.metadata
 			}
 		}
 	}
-	
+
 	return results
 }
 
-// 关闭存储（简化版）
+// 关闭存储（内存版无需操作）
 pub fn (mut s PersistentStore) close() {}
 
 // 导出会话到 JSON
@@ -202,10 +202,10 @@ pub fn (mut s PersistentStore) export_conversation(id string, output_path string
 pub fn (mut s PersistentStore) import_conversation(input_path string) ! {
 	json_data := os.read_file(input_path)!
 	conv := json.decode(protocol.Conversation, json_data)!
-	
+
 	// 创建会话
 	s.conversations[conv.id] = conv
-	
+
 	// 添加消息
 	for msg in conv.messages {
 		if msg.conversation_id == '' {
@@ -228,25 +228,37 @@ pub fn (mut s PersistentStore) import_conversation(input_path string) ! {
 	}
 }
 
-// 余弦相似度
-// fn cosine_similarity(a []f32, b []f32) f32 {
-// 	if a.len != b.len || a.len == 0 {
-// 		return 0.0
-// 	}
-// 	
-// 	mut dot_product := f32(0.0)
-// 	mut norm_a := f32(0.0)
-// 	mut norm_b := f32(0.0)
-// 	
-// 	for i := 0; i < a.len; i++ {
-// 		dot_product += a[i] * b[i]
-// 		norm_a += a[i] * a[i]
-// 		norm_b += b[i] * b[i]
-// 	}
-// 	
-// 	if norm_a == 0.0 || norm_b == 0.0 {
-// 		return 0.0
-// 	}
-// 	
-// 	return dot_product / (f32(math.sqrt(f64(norm_a))) * f32(math.sqrt(f64(norm_b))))
-// }
+// 计算余弦相似度（本地实现，避免依赖 embeddings 模块）
+fn compute_cosine_similarity(a []f32, b []f32) f32 {
+	if a.len != b.len || a.len == 0 {
+		return 0.0
+	}
+
+	mut dot_product := f32(0.0)
+	mut norm_a := f32(0.0)
+	mut norm_b := f32(0.0)
+
+	for i := 0; i < a.len; i++ {
+		dot_product += a[i] * b[i]
+		norm_a += a[i] * a[i]
+		norm_b += b[i] * b[i]
+	}
+
+	if norm_a == 0.0 || norm_b == 0.0 {
+		return 0.0
+	}
+
+	// 简单的平方根近似
+	mut sqrt_a := norm_a
+	mut sqrt_b := norm_b
+	for _ in 0 .. 10 {
+		sqrt_a = (sqrt_a + norm_a / sqrt_a) / 2.0
+		sqrt_b = (sqrt_b + norm_b / sqrt_b) / 2.0
+	}
+
+	if sqrt_a == 0.0 || sqrt_b == 0.0 {
+		return 0.0
+	}
+
+	return dot_product / (sqrt_a * sqrt_b)
+}

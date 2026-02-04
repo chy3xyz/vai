@@ -1,284 +1,725 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>VAI Dashboard</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f0f23; color: #e0e0e0; min-height: 100vh;
+            background: #0f0f23;
+            color: #e0e0e0;
+            min-height: 100vh;
         }
-        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
-        header { text-align: center; padding: 40px 0; border-bottom: 1px solid #333; }
-        header h1 {
-            font-size: 3em;
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 24px 20px 32px;
+        }
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 18px;
+            border-bottom: 1px solid #333;
+            gap: 16px;
+        }
+        .title-block h1 {
+            font-size: 2.4rem;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            margin-bottom: 10px;
+            margin-bottom: 6px;
         }
-        header p { color: #888; font-size: 1.1em; }
-        .dashboard {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px; margin-top: 30px;
+        .title-block p {
+            color: #888;
+            font-size: 0.95rem;
         }
-        .card {
-            background: #1a1a2e; border-radius: 12px; padding: 24px;
+        .status-bar {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 6px;
+            font-size: 0.85rem;
+            color: #a0a0b8;
+        }
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .status-pill {
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #1a1a2e;
             border: 1px solid #2d2d44;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 32px rgba(102, 126, 234, 0.2);
-        }
-        .card h2 {
-            font-size: 1.2em; margin-bottom: 16px; color: #667eea;
-            display: flex; align-items: center; gap: 10px;
+            font-size: 0.8rem;
         }
         .status-indicator {
-            display: inline-block; width: 8px; height: 8px;
-            border-radius: 50%; background: #4caf50;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #4caf50;
+            box-shadow: 0 0 10px rgba(76, 175, 80, 0.6);
             animation: pulse 2s infinite;
         }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        .metric {
-            display: flex; justify-content: space-between;
-            padding: 12px 0; border-bottom: 1px solid #2d2d44;
+        .status-indicator.warn {
+            background: #ffb300;
+            box-shadow: 0 0 10px rgba(255, 179, 0, 0.6);
         }
-        .metric:last-child { border-bottom: none; }
-        .metric-value { font-size: 1.5em; font-weight: bold; color: #667eea; }
-        .agent-list { max-height: 300px; overflow-y: auto; }
-        .agent-item {
-            display: flex; align-items: center; padding: 12px;
-            background: #16162a; border-radius: 8px; margin-bottom: 8px;
-            cursor: pointer; transition: background 0.2s;
+        .status-indicator.error {
+            background: #f44336;
+            box-shadow: 0 0 10px rgba(244, 67, 54, 0.6);
         }
-        .agent-item:hover { background: #1f1f3a; }
-        .agent-avatar {
-            width: 40px; height: 40px; border-radius: 50%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            display: flex; align-items: center; justify-content: center;
-            font-weight: bold; margin-right: 12px;
+        @keyframes pulse {
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.7;
+                transform: scale(1.08);
+            }
         }
-        .agent-info { flex: 1; }
-        .agent-name { font-weight: 500; }
-        .agent-role { font-size: 0.85em; color: #888; }
-        .agent-status { width: 10px; height: 10px; border-radius: 50%; background: #4caf50; }
-        .agent-status.busy { background: #ff9800; }
-        .agent-status.offline { background: #f44336; }
-        .chat-container { grid-column: 1 / -1; height: 500px; display: flex; flex-direction: column; }
-        .chat-messages {
-            flex: 1; overflow-y: auto; padding: 16px;
-            background: #0f0f1a; border-radius: 8px; margin-bottom: 16px;
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 18px;
         }
-        .message { margin-bottom: 16px; animation: fadeIn 0.3s ease; }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .message-header {
-            display: flex; align-items: center; gap: 8px;
-            margin-bottom: 4px; font-size: 0.85em; color: #888;
-        }
-        .message-content {
-            background: #1a1a2e; padding: 12px 16px;
-            border-radius: 12px; border-left: 3px solid #667eea;
-        }
-        .message.user .message-content { border-left-color: #4caf50; }
-        .chat-input { display: flex; gap: 12px; }
-        .chat-input input {
-            flex: 1; padding: 14px 18px; background: #1a1a2e;
-            border: 1px solid #2d2d44; border-radius: 8px;
-            color: #e0e0e0; font-size: 1em; outline: none;
-        }
-        .chat-input input:focus { border-color: #667eea; }
-        .chat-input button {
-            padding: 14px 28px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none; border-radius: 8px; color: white;
-            font-weight: 500; cursor: pointer;
-        }
-        .log-container { max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.85em; }
-        .log-entry { padding: 6px 0; border-bottom: 1px solid #2d2d44; color: #888; }
-        .log-entry.error { color: #f44336; }
-        .log-entry.warn { color: #ff9800; }
-        .log-entry.info { color: #4caf50; }
-        .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
         .btn {
-            padding: 10px 20px; background: #1a1a2e;
-            border: 1px solid #2d2d44; border-radius: 6px;
-            color: #e0e0e0; cursor: pointer;
+            padding: 8px 16px;
+            background: #1a1a2e;
+            border: 1px solid #2d2d44;
+            border-radius: 999px;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 0.85rem;
         }
-        .btn:hover { background: #2d2d44; border-color: #667eea; }
+        .btn:hover {
+            background: #2d2d44;
+            border-color: #667eea;
+        }
         .btn-primary {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border: none;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: minmax(0, 2fr) minmax(0, 2fr);
+            grid-template-rows: auto auto minmax(260px, auto);
+            grid-template-areas:
+                "sys agents"
+                "tasks logs"
+                "chat chat";
+            gap: 20px;
+            margin-top: 24px;
+        }
+        @media (max-width: 960px) {
+            .dashboard {
+                grid-template-columns: minmax(0, 1fr);
+                grid-template-areas:
+                    "sys"
+                    "agents"
+                    "tasks"
+                    "logs"
+                    "chat";
+            }
+        }
+        .card {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 20px 20px 18px;
+            border: 1px solid #2d2d44;
+            transition: transform 0.15s ease-out, box-shadow 0.15s ease-out,
+                border-color 0.15s ease-out;
+        }
+        .card:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 32px rgba(102, 126, 234, 0.16);
+            border-color: #3b3b5c;
+        }
+        .card h2 {
+            font-size: 1.05rem;
+            margin-bottom: 14px;
+            color: #c3c7ff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .card h2 span.label-sub {
+            font-size: 0.8rem;
+            color: #777a9c;
+            font-weight: normal;
+        }
+
+        .card.sys {
+            grid-area: sys;
+        }
+        .card.agents {
+            grid-area: agents;
+        }
+        .card.tasks {
+            grid-area: tasks;
+        }
+        .card.logs {
+            grid-area: logs;
+        }
+        .card.chat {
+            grid-area: chat;
+            display: flex;
+            flex-direction: column;
+            min-height: 260px;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px 20px;
+        }
+        .metric {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 6px 0;
+        }
+        .metric-label {
+            font-size: 0.8rem;
+            color: #a0a0b8;
+        }
+        .metric-value {
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: #e1e4ff;
+        }
+        .metric-sub {
+            font-size: 0.75rem;
+            color: #777a9c;
+        }
+
+        .agent-list {
+            max-height: 280px;
+            overflow-y: auto;
+        }
+        .agent-item {
+            display: flex;
+            align-items: center;
+            padding: 10px 10px;
+            background: #16162a;
+            border-radius: 10px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: background 0.15s ease-out, transform 0.1s ease-out;
+        }
+        .agent-item:hover {
+            background: #232347;
+            transform: translateY(-1px);
+        }
+        .agent-item.active {
+            border: 1px solid #667eea;
+        }
+        .agent-avatar {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            margin-right: 10px;
+            font-size: 0.9rem;
+        }
+        .agent-info {
+            flex: 1;
+        }
+        .agent-name {
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+        .agent-role {
+            font-size: 0.75rem;
+            color: #888bb0;
+        }
+        .agent-status {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #4caf50;
+        }
+        .agent-status.busy {
+            background: #ff9800;
+        }
+        .agent-status.offline {
+            background: #f44336;
+        }
+
+        .task-list {
+            max-height: 260px;
+            overflow-y: auto;
+            font-size: 0.8rem;
+        }
+        .task-row {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            padding: 6px 0;
+            border-bottom: 1px solid #2d2d44;
+        }
+        .task-row:last-child {
+            border-bottom: none;
+        }
+        .task-header {
+            display: flex;
+            justify-content: space-between;
+        }
+        .task-id {
+            font-family: monospace;
+            color: #b0b3ff;
+        }
+        .task-status {
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #232347;
+            color: #cfd0ff;
+        }
+        .task-meta {
+            display: flex;
+            justify-content: space-between;
+            color: #777a9c;
+        }
+
+        .log-container {
+            max-height: 260px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.8rem;
+        }
+        .log-entry {
+            padding: 5px 0;
+            border-bottom: 1px solid #2d2d44;
+            color: #a0a0b8;
+        }
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+        .log-entry.error {
+            color: #f44336;
+        }
+        .log-entry.warn {
+            color: #ffb300;
+        }
+        .log-entry.info {
+            color: #4caf50;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 14px 14px 10px;
+            background: #0f0f1a;
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+        .message {
+            margin-bottom: 12px;
+            animation: fadeIn 0.25s ease;
+        }
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(6px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 3px;
+            font-size: 0.78rem;
+            color: #888bb0;
+        }
+        .message-content {
+            background: #1a1a2e;
+            padding: 9px 12px;
+            border-radius: 10px;
+            border-left: 3px solid #667eea;
+            font-size: 0.9rem;
+        }
+        .message.user .message-content {
+            border-left-color: #4caf50;
+        }
+        .chat-input {
+            display: flex;
+            gap: 10px;
+        }
+        .chat-input input {
+            flex: 1;
+            padding: 10px 12px;
+            background: #1a1a2e;
+            border: 1px solid #2d2d44;
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-size: 0.9rem;
+            outline: none;
+        }
+        .chat-input input:focus {
+            border-color: #667eea;
+        }
+        .chat-input button {
+            padding: 10px 18px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        .empty-tip {
+            color: #666;
+            text-align: center;
+            font-size: 0.85rem;
+            padding: 18px 0;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>VAI Dashboard</h1>
-            <p>V AI Infrastructure - Multi-Agent System Console</p>
-        </header>
-        
-        <div class="actions">
-            <button class="btn btn-primary" onclick="refreshData()">Refresh</button>
-            <button class="btn" onclick="createAgent()">New Agent</button>
-            <button class="btn" onclick="broadcastMessage()">Broadcast</button>
-        </div>
-        
-        <div class="dashboard">
-            <div class="card">
-                <h2><span class="status-indicator"></span>System Status</h2>
-                <div class="metric"><span>Agents Online</span><span class="metric-value" id="agents-online">0</span></div>
-                <div class="metric"><span>Active Tasks</span><span class="metric-value" id="active-tasks">0</span></div>
-                <div class="metric"><span>Uptime</span><span class="metric-value" id="uptime">00:00</span></div>
-                <div class="metric"><span>Messages</span><span class="metric-value" id="messages-count">0</span></div>
+            <div class="title-block">
+                <h1>VAI Dashboard</h1>
+                <p>V AI Infrastructure · Multi-Agent System Console</p>
             </div>
-            
-            <div class="card">
-                <h2>Active Agents</h2>
-                <div class="agent-list" id="agent-list">
-                    <p style="color: #666; text-align: center;">No agents connected</p>
+            <div class="status-bar">
+                <div class="status-row">
+                    <span>Env:</span>
+                    <span class="status-pill" id="env-label">Detecting…</span>
+                </div>
+                <div class="status-row">
+                    <span>Host:</span>
+                    <span class="status-pill" id="host-label">-</span>
+                </div>
+                <div class="status-row">
+                    <span>Health:</span>
+                    <span class="status-indicator" id="health-indicator"></span>
+                    <span id="health-text">Unknown</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-pill" id="last-refresh">Last refresh: -</span>
                 </div>
             </div>
-            
-            <div class="card">
-                <h2>Recent Tasks</h2>
-                <div id="task-list"><p style="color: #666; text-align: center;">No tasks yet</p></div>
+        </header>
+
+        <div class="actions">
+            <button class="btn btn-primary" onclick="refreshData()">Refresh now</button>
+            <button class="btn" onclick="createAgent()">New Agent (mock)</button>
+            <button class="btn" onclick="broadcastMessage()">Broadcast (log only)</button>
+        </div>
+
+        <div class="dashboard">
+            <!-- System status -->
+            <div class="card sys">
+                <h2>System Status <span class="label-sub" id="uptime-label">Uptime: 00:00</span></h2>
+                <div class="metrics-grid">
+                    <div class="metric">
+                        <div class="metric-label">Agents Online</div>
+                        <div class="metric-value" id="agents-online">0</div>
+                        <div class="metric-sub" id="agents-breakdown">idle 0 · busy 0</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Active Tasks</div>
+                        <div class="metric-value" id="active-tasks">0</div>
+                        <div class="metric-sub">From /api/status</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Messages (this session)</div>
+                        <div class="metric-value" id="messages-count">0</div>
+                        <div class="metric-sub">Chat messages sent</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Last error</div>
+                        <div class="metric-sub" id="last-error-text">None</div>
+                    </div>
+                </div>
             </div>
-            
-            <div class="card">
+
+            <!-- Agents -->
+            <div class="card agents">
+                <h2>Active Agents <span class="label-sub">/api/agents</span></h2>
+                <div class="agent-list" id="agent-list">
+                    <p class="empty-tip">No agents connected</p>
+                </div>
+            </div>
+
+            <!-- Tasks (placeholder using status info) -->
+            <div class="card tasks">
+                <h2>Recent Tasks <span class="label-sub">(summary)</span></h2>
+                <div class="task-list" id="task-list">
+                    <p class="empty-tip">No task API yet · using status summary only.</p>
+                </div>
+            </div>
+
+            <!-- Logs -->
+            <div class="card logs">
                 <h2>System Logs</h2>
                 <div class="log-container" id="log-container">
-                    <div class="log-entry info">[INFO] System initialized</div>
+                    <div class="log-entry info">[INFO] Dashboard loaded</div>
                 </div>
             </div>
-            
-            <div class="card chat-container">
-                <h2>Agent Chat</h2>
+
+            <!-- Chat -->
+            <div class="card chat">
+                <h2>Agent Chat <span class="label-sub">/api/conversations</span></h2>
                 <div class="chat-messages" id="chat-messages">
                     <div class="message">
-                        <div class="message-header"><strong>System</strong><span>just now</span></div>
-                        <div class="message-content">Welcome to VAI! Start a conversation with the agents.</div>
+                        <div class="message-header">
+                            <strong>System</strong>
+                            <span>just now</span>
+                        </div>
+                        <div class="message-content">
+                            Welcome to VAI! Start a conversation with the agents.
+                        </div>
                     </div>
                 </div>
                 <div class="chat-input">
-                    <input type="text" id="message-input" placeholder="Type your message..." onkeypress="if(event.key==='Enter')sendMessage()">
+                    <input
+                        type="text"
+                        id="message-input"
+                        placeholder="Type your message..."
+                        onkeypress="if (event.key === 'Enter') sendMessage()"
+                    />
                     <button onclick="sendMessage()">Send</button>
                 </div>
             </div>
         </div>
     </div>
-    
+
     <script>
         const API_BASE = window.location.origin + '/api';
         let agents = [];
         let messages = [];
-        
+        let startTime = Date.now();
+        let lastRefreshOk = false;
+        let lastError = null;
+
         document.addEventListener('DOMContentLoaded', () => {
+            initHeader();
             refreshData();
             setInterval(refreshData, 5000);
+            setInterval(updateUptime, 1000);
         });
-        
-        async function refreshData() {
-            try {
-                const agentsRes = await fetch(`${API_BASE}/agents`);
-                const agentsData = await agentsRes.json();
-                if (agentsData.success) {
-                    agents = agentsData.data;
-                    updateAgentList(agents);
-                    document.getElementById('agents-online').textContent = agents.length;
-                }
-                
-                const statusRes = await fetch(`${API_BASE}/status`);
-                const statusData = await statusRes.json();
-                if (statusData.success) {
-                    document.getElementById('active-tasks').textContent = statusData.data.agents_busy || 0;
-                }
-            } catch (err) {
-                addLog(`Failed to refresh: ${err.message}`, 'error');
+
+        function initHeader() {
+            const host = window.location.host || 'localhost';
+            const env =
+                host.includes('localhost') || host.includes('127.0.0.1')
+                    ? 'DEV'
+                    : 'PROD';
+            document.getElementById('env-label').textContent = env;
+            document.getElementById('host-label').textContent = host;
+        }
+
+        function updateUptime() {
+            const seconds = Math.floor((Date.now() - startTime) / 1000);
+            const m = String(Math.floor(seconds / 60)).padStart(2, '0');
+            const s = String(seconds % 60).padStart(2, '0');
+            const label = document.getElementById('uptime-label');
+            if (label) {
+                label.textContent = `Uptime: ${m}:${s}`;
             }
         }
-        
-        function updateAgentList(agents) {
+
+        async function refreshData() {
+            const startedAt = new Date();
+            try {
+                // Agents
+                const agentsRes = await fetch(`${API_BASE}/agents`);
+                const agentsJson = await safeJson(agentsRes);
+                if (agentsJson && agentsJson.success) {
+                    agents = agentsJson.data || [];
+                    updateAgentList(agents);
+                    const online = agents.length;
+                    const idle = agents.filter(
+                        (a) => String(a.status || '').toLowerCase() === 'idle'
+                    ).length;
+                    const busy = agents.filter(
+                        (a) => String(a.status || '').toLowerCase() === 'busy'
+                    ).length;
+                    document.getElementById('agents-online').textContent =
+                        online;
+                    document.getElementById(
+                        'agents-breakdown'
+                    ).textContent = `idle ${idle} · busy ${busy}`;
+                }
+
+                // Status
+                const statusRes = await fetch(`${API_BASE}/status`);
+                const statusJson = await safeJson(statusRes);
+                if (statusJson && statusJson.success) {
+                    const busyCount =
+                        (statusJson.data &&
+                            (statusJson.data.agents_busy || 0)) ||
+                        0;
+                    document.getElementById('active-tasks').textContent =
+                        busyCount;
+                }
+
+                lastRefreshOk = true;
+                lastError = null;
+                updateHealthIndicator();
+                updateLastRefresh(startedAt);
+            } catch (err) {
+                lastRefreshOk = false;
+                lastError = err.message || String(err);
+                updateHealthIndicator();
+                addLog(`Failed to refresh: ${lastError}`, 'error');
+                updateLastRefresh(startedAt, true);
+            }
+        }
+
+        async function safeJson(res) {
+            try {
+                return await res.json();
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function updateLastRefresh(time, failed = false) {
+            const el = document.getElementById('last-refresh');
+            if (!el) return;
+            const ts = time.toLocaleTimeString();
+            el.textContent = `Last refresh: ${ts} ${failed ? '(failed)' : ''}`;
+        }
+
+        function updateHealthIndicator() {
+            const dot = document.getElementById('health-indicator');
+            const text = document.getElementById('health-text');
+            const lastErrText = document.getElementById('last-error-text');
+            if (!dot || !text) return;
+
+            dot.classList.remove('warn', 'error');
+
+            if (lastRefreshOk) {
+                dot.classList.remove('warn', 'error');
+                text.textContent = 'Healthy';
+                if (lastErrText) lastErrText.textContent = 'None';
+            } else {
+                dot.classList.add('error');
+                text.textContent = 'Degraded';
+                if (lastErrText)
+                    lastErrText.textContent = lastError || 'Unknown error';
+            }
+        }
+
+        function updateAgentList(list) {
             const container = document.getElementById('agent-list');
-            if (agents.length === 0) {
-                container.innerHTML = '<p style="color: #666; text-align: center;">No agents connected</p>';
+            if (!container) return;
+            if (!list || list.length === 0) {
+                container.innerHTML =
+                    '<p class="empty-tip">No agents connected</p>';
                 return;
             }
-            container.innerHTML = agents.map(agent => `
+            container.innerHTML = list
+                .map((agent) => {
+                    const name = agent.name || agent.id || 'Agent';
+                    const initial = name.charAt(0).toUpperCase();
+                    const role = agent.role || 'unknown';
+                    const caps = agent.capabilities || [];
+                    const status = (agent.status || '').toLowerCase();
+                    return `
                 <div class="agent-item" onclick="selectAgent('${agent.id}')">
-                    <div class="agent-avatar">${agent.name.charAt(0).toUpperCase()}</div>
+                    <div class="agent-avatar">${initial}</div>
                     <div class="agent-info">
-                        <div class="agent-name">${agent.name}</div>
-                        <div class="agent-role">${agent.role} - ${agent.capabilities.length} skills</div>
+                        <div class="agent-name">${name}</div>
+                        <div class="agent-role">${role} · ${caps.length} skills</div>
                     </div>
-                    <div class="agent-status ${agent.status}"></div>
-                </div>
-            `).join('');
+                    <div class="agent-status ${status}"></div>
+                </div>`;
+                })
+                .join('');
         }
-        
+
         async function sendMessage() {
             const input = document.getElementById('message-input');
+            if (!input) return;
             const content = input.value.trim();
             if (!content) return;
-            
+
             addMessage('user', 'You', content);
             input.value = '';
-            
+
             try {
                 await fetch(`${API_BASE}/conversations/global/messages`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: content })
+                    body: JSON.stringify({ message: content }),
                 });
             } catch (err) {
                 addLog(`Failed to send: ${err.message}`, 'error');
             }
         }
-        
+
         function addMessage(type, sender, content) {
             const container = document.getElementById('chat-messages');
+            if (!container) return;
             const msgDiv = document.createElement('div');
             msgDiv.className = `message ${type}`;
             msgDiv.innerHTML = `
-                <div class="message-header"><strong>${sender}</strong><span>${new Date().toLocaleTimeString()}</span></div>
-                <div class="message-content">${content.replace(/</g, '&lt;')}</div>
+                <div class="message-header">
+                    <strong>${sender}</strong>
+                    <span>${new Date().toLocaleTimeString()}</span>
+                </div>
+                <div class="message-content">${content.replace(
+                    /</g,
+                    '&lt;'
+                )}</div>
             `;
             container.appendChild(msgDiv);
             container.scrollTop = container.scrollHeight;
             messages.push({ type, sender, content, time: new Date() });
-            document.getElementById('messages-count').textContent = messages.length;
+            const countEl = document.getElementById('messages-count');
+            if (countEl) countEl.textContent = messages.length;
         }
-        
-        function addLog(message, level = 'debug') {
+
+        function addLog(message, level = 'info') {
             const container = document.getElementById('log-container');
+            if (!container) return;
             const entry = document.createElement('div');
             entry.className = `log-entry ${level}`;
             entry.textContent = `[${level.toUpperCase()}] ${message}`;
             container.appendChild(entry);
             container.scrollTop = container.scrollHeight;
         }
-        
+
         function createAgent() {
-            const name = prompt('Enter agent name:');
-            if (name) addLog(`Creating agent: ${name}`, 'info');
+            const name = prompt('Enter agent name (mock only):');
+            if (name) addLog(`(Mock) Creating agent: ${name}`, 'info');
         }
-        
+
         function broadcastMessage() {
-            const message = prompt('Enter broadcast message:');
+            const message = prompt('Enter broadcast message (log only):');
             if (message) addLog(`Broadcasting: ${message}`, 'info');
         }
-        
+
         function selectAgent(agentId) {
-            const agent = agents.find(a => a.id === agentId);
-            if (agent) addLog(`Selected agent: ${agent.name}`, 'info');
+            const agent = agents.find((a) => a.id === agentId);
+            if (agent) {
+                addLog(`Selected agent: ${agent.name || agent.id}`, 'info');
+            }
         }
     </script>
 </body>

@@ -13,10 +13,9 @@ module main
 import llm { new_openrouter_client, CompletionRequest, user_message, system_message, assistant_message }
 import skills { new_registry, register_builtin_skills, SkillContext, Result }
 import planner { new_react_planner, ExecutionContext }
-import memory { new_memory_store, new_ollama_embedder, new_simple_index, Document }
+import memory { new_memory_store }
 import json
 import os
-import time
 
 // 元宇宙叙事框架结构
 pub struct MetaverseNarrative {
@@ -95,16 +94,15 @@ pub struct RiskFactor {
 // 元宇宙创意变现引擎
 pub struct MetaverseCreatorEngine {
 	pub mut:
-		llm_client     llm.LLMProvider
-		skills         skills.Registry
-		memory         memory.MemoryStore
-		embedder       memory.Embedder
+	llm_client llm.LLMProvider
+	skills     skills.Registry
+	memory     memory.MemoryStore
 }
 
 // 创建引擎
 pub fn new_metaverse_engine() !MetaverseCreatorEngine {
 	// 使用 OpenRouter API
-	api_key := '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'
+	api_key := os.getenv('OPENROUTER_API_KEY')
 
 	mut client := new_openrouter_client(api_key)
 	client.site_url = 'https://vai.local'
@@ -117,14 +115,10 @@ pub fn new_metaverse_engine() !MetaverseCreatorEngine {
 	// 初始化记忆
 	store := new_memory_store()
 
-	// 初始化嵌入器
-	mut embedder := new_ollama_embedder('nomic-embed-text')
-
 	return MetaverseCreatorEngine{
 		llm_client: client
-		skills: registry
-		memory: store
-		embedder: embedder
+		skills:     registry
+		memory:     store
 	}
 }
 
@@ -167,7 +161,11 @@ pub fn (mut e MetaverseCreatorEngine) analyze_concept(concept string) !Metaverse
 		max_tokens: 2000
 	}
 
-	response := e.llm_client.complete(request)!
+	// 这里调用一次 LLM，用于真实测试；结果在本示例中未解析使用
+	e.llm_client.complete(request) or {
+		eprintln('LLM 请求失败: ${err}')
+		return MetaverseNarrative{}
+	}
 
 	// 解析响应构建叙事结构
 	// 简化处理，实际应该解析JSON
@@ -287,9 +285,9 @@ pub fn (mut e MetaverseCreatorEngine) generate_monetization_plan(narrative Metav
 
 // 使用 ReAct 规划器优化方案
 pub fn (mut e MetaverseCreatorEngine) optimize_plan_with_react(plan MonetizationPlan) !MonetizationPlan {
-	mut planner := new_react_planner(e.llm_client)
+	mut react_planner := new_react_planner(e.llm_client)
 
-	ctx := ExecutionContext{
+	mut ctx := ExecutionContext{
 		skill_registry: &e.skills
 		skill_context: SkillContext{
 			session_id: 'metaverse_planning'
@@ -301,7 +299,7 @@ pub fn (mut e MetaverseCreatorEngine) optimize_plan_with_react(plan Monetization
 
 	goal := '优化以下元宇宙创意变现方案，找出潜在改进点：\n${json.encode(plan)}'
 
-	result := planner.execute(goal, ctx)!
+	result := react_planner.execute(goal, mut ctx)!
 
 	// 根据结果调整方案
 	println('ReAct 优化结果: ${result.final_answer}')
@@ -311,38 +309,17 @@ pub fn (mut e MetaverseCreatorEngine) optimize_plan_with_react(plan Monetization
 
 // 保存方案到向量数据库
 pub fn (mut e MetaverseCreatorEngine) save_plan(plan MonetizationPlan) ! {
-	// 创建文档索引
-	mut index := new_simple_index(e.embedder, e.memory)
-
-	// 将方案各部分向量化存储
-	doc := Document{
-		id: 'plan_${time.now().unix()}'
-		content: json.encode(plan)
-		metadata: {
-			'type': 'monetization_plan'
-			'total_estimate': plan.total_estimate.str()
-		}
-	}
-
-	index.add_document(doc)!
-
-	println('方案已保存到向量数据库')
+	// 简化版：当前示例仅打印提示，不实际写入向量索引。
+	// 如需启用真正的向量存储，可在 memory 模块中配置 PersistentStore 与 SimpleMemoryIndex。
+	_ = plan
+	println('（示例）save_plan: 这里可以接入向量数据库，将方案保存起来。')
 }
 
 // 搜索相似方案
 pub fn (mut e MetaverseCreatorEngine) search_similar_plans(query string) ![]string {
-	mut index := new_simple_index(e.embedder, e.memory)
-
-	results := index.search(query, 5)
-
-	mut contents := []string{}
-	for result in results {
-		if content := result.metadata['content'] {
-			contents << content.str()
-		}
-	}
-
-	return contents
+	// 简化版：当前示例不实现实际的相似方案检索，仅返回空结果。
+	_ = query
+	return []string{}
 }
 
 // 格式化输出方案
@@ -438,7 +415,7 @@ fn main() {
 
 	// 获取用户输入
 	println('请输入您的创意概念 (例如: "AI驱动的虚拟时尚设计平台"):')
-	concept := os.input('> ')
+	mut concept := os.input('> ')
 
 	if concept.len == 0 {
 		concept = 'AI驱动的虚拟时尚设计平台，让用户可以用自然语言生成可穿戴的3D数字服装，并在元宇宙中展示和交易'
