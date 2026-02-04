@@ -1,11 +1,12 @@
 // vai.memory.persistent - 持久化记忆存储
-// 使用 SQLite 实现会话和消息的持久化存储
+// 实现文件存储的持久化记忆系统，支持每日笔记和长期记忆
 module memory
 
 import protocol
 import json
 import os
 import time
+// DailyNotesManager 和 LongTermMemoryManager 在同一模块中，直接使用
 
 // VectorScore 向量相似度分数（用于内部排序）
 pub struct VectorScore {
@@ -14,14 +15,16 @@ pub:
 	score f32
 }
 
-// PersistentStore 持久化存储（内存版 - 注意：当前为内存实现，重启后数据会丢失）
+// PersistentStore 持久化存储（文件存储实现）
 @[heap]
 pub struct PersistentStore {
 pub mut:
-	db_path       string
-	conversations map[string]protocol.Conversation
-	messages      map[string][]protocol.Message
-	vectors       map[string]VectorData
+	workspace_path      string
+	conversations       map[string]protocol.Conversation
+	messages            map[string][]protocol.Message
+	vectors             map[string]VectorData
+	daily_notes_mgr     DailyNotesManager
+	long_term_mgr       LongTermMemoryManager
 }
 
 struct VectorData {
@@ -30,19 +33,25 @@ struct VectorData {
 }
 
 // 创建持久化存储
-pub fn new_persistent_store(db_path string) !PersistentStore {
+pub fn new_persistent_store(workspace_path string) !PersistentStore {
+	expanded_path := os.expand_tilde_to_home(workspace_path)
+	
 	// 确保目录存在
-	dir := os.dir(db_path)
-	if !os.is_dir(dir) {
-		os.mkdir_all(dir) or { return error('failed to create directory: ${err}') }
+	if !os.is_dir(expanded_path) {
+		os.mkdir_all(expanded_path) or { return error('failed to create directory: ${err}') }
 	}
 
 	mut store := PersistentStore{
-		db_path:       db_path
+		workspace_path: expanded_path
 		conversations: map[string]protocol.Conversation{}
-		messages:      map[string][]protocol.Message{}
-		vectors:       map[string]VectorData{}
+		messages: map[string][]protocol.Message{}
+		vectors: map[string]VectorData{}
+		daily_notes_mgr: new_daily_notes_manager(expanded_path)
+		long_term_mgr: new_long_term_memory_manager(expanded_path)
 	}
+
+	// 初始化长期记忆
+	store.long_term_mgr.init() or {}
 
 	return store
 }
@@ -112,6 +121,13 @@ pub fn (mut s PersistentStore) add_message(conversation_id string, msg protocol.
 	if mut conv := s.conversations[conversation_id] {
 		conv.updated_at = time.now()
 		s.conversations[conversation_id] = conv
+	}
+
+	// 添加到每日笔记（如果是用户消息）
+	if msg.role == .user {
+		if text := msg.text() {
+			s.daily_notes_mgr.add_conversation_summary(conversation_id, text) or {}
+		}
 	}
 }
 

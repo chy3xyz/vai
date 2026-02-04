@@ -1,7 +1,7 @@
 # VAI Usage Guide (English)
 *(Chinese version: [`docs/USAGE.zh-CN.md`](USAGE.zh-CN.md))*
 
-This guide is written to match the current implementation in this repository (see `vai.v`, `web/`, `gateway/`, `llm/`).
+This guide matches the current implementation (see `vai.v`, `config/`, `workspace/`, `bus/`, `agent/`, `web/`, `gateway/`, `llm/`).
 
 ## Quick start
 
@@ -13,9 +13,19 @@ v -prod .
 ./vai --help
 ```
 
-### 2) Pick ONE LLM provider
+### 2) First-time setup (onboard)
 
-VAI can run with different providers. For a minimal working setup, pick one:
+Initialize configuration and workspace. This creates `~/.vai/config.json` and `~/.vai/workspace/` (including template files like AGENTS.md, SOUL.md, USER.md, memory/MEMORY.md):
+
+```bash
+./vai onboard
+```
+
+Aliases: `vai init`, `vai setup`. After this, edit `~/.vai/config.json` to add API keys and model settings.
+
+### 3) Pick ONE LLM provider
+
+VAI can run with different providers. For a minimal working setup, pick one (or configure in `config.json`):
 
 - **OpenAI**
 
@@ -40,6 +50,17 @@ ollama serve
 ## Run modes
 
 The CLI entrypoint is `vai.v` and supports these modes:
+
+### Commands summary
+
+| Command        | Description                          |
+|----------------|--------------------------------------|
+| `vai onboard`  | Initialize config and workspace      |
+| `vai chat`     | Interactive chat                     |
+| `vai cli`      | CLI console                          |
+| `vai web`      | Web UI server                        |
+| `vai cron list`| List scheduled cron jobs             |
+| `vai`          | Default service mode (gateways + Agent) |
 
 ### Web dashboard
 
@@ -87,6 +108,11 @@ This runs the default “service mode” defined in `VAIAgent.start()` (see `vai
 - `WHATSAPP_PHONE_ID`, `WHATSAPP_TOKEN` *(WhatsApp Business)*
 - `DISCORD_BOT_TOKEN`
 - `DEBOX_APP_ID`, `DEBOX_APP_SECRET`
+
+### Config file and workspace
+
+- **Config file**: `~/.vai/config.json` (created by `vai onboard`). Structure includes `providers`, `agents.defaults`, `tools`, `workspace`, `cron`. Environment variables override where defined (e.g. `VAI_DEFAULT_MODEL`, `VAI_WORKSPACE`).
+- **Workspace**: `~/.vai/workspace/` contains `memory/` (e.g. MEMORY.md, daily notes YYYY-MM-DD.md), template files, and skill directories. See `arch.md` for details.
 
 ## Web UI & REST API
 
@@ -149,6 +175,10 @@ export VAI_DEFAULT_MODEL="gpt-4o-mini"
 ollama serve
 ./vai web
 ```
+
+## Architecture
+
+For component overview, data flow, and config/workspace paths, see **[arch.md](../arch.md)** in the repo root.
 
 ## Troubleshooting
 

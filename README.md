@@ -13,9 +13,11 @@ VAI is a lightweight AI agent runtime and tooling suite built in **V**.
 
 - High performance, single binary build
 - Multi-provider LLM support (OpenAI, OpenRouter, Ollama, …)
+- Event-driven message bus and Agent loop (context → LLM → tools → memory)
 - Multi-agent collaboration (hub, routing, task scheduling)
-- Skills/tool execution framework
-- Memory subsystem (conversation store + vector search)
+- Skills/tool execution framework (builtin, dynamic, Markdown with YAML frontmatter)
+- Layered memory (conversation store, daily notes, long-term storage)
+- Cron and heartbeat services for scheduled and proactive tasks
 - Web dashboard + REST API
 - CLI console and interactive chat mode
 
@@ -29,6 +31,16 @@ v -prod .
 ./vai --help
 ```
 
+### First-time setup
+
+Initialize configuration and workspace (creates `~/.vai/config.json` and `~/.vai/workspace/`):
+
+```bash
+./vai onboard
+```
+
+Then edit `~/.vai/config.json` to add API keys and model settings.
+
 ### Run the web dashboard
 
 ```bash
@@ -39,7 +51,7 @@ Then open `http://localhost:8080`.
 
 ### Minimal configuration
 
-Pick **one** provider:
+Pick **one** provider (or set in `~/.vai/config.json` after `vai onboard`):
 
 ```bash
 # OpenAI
@@ -53,22 +65,40 @@ export VAI_DEFAULT_MODEL="gpt-4o-mini"  # optional
 ollama serve
 ```
 
+## Commands
+
+| Command        | Description                    |
+|----------------|--------------------------------|
+| `vai onboard`  | Initialize config and workspace |
+| `vai chat`     | Interactive chat mode          |
+| `vai cli`      | CLI console                    |
+| `vai web`      | Start Web UI server            |
+| `vai cron list`| List scheduled cron jobs       |
+| `vai`          | Default service mode (gateways + Agent) |
+
 ## Repository layout (high level)
 
 ```
 vai/
-├── agent/        # multi-agent runtime (hub/agents/coordination)
-├── cli/          # CLI console
-├── gateway/      # platform adapters (Telegram/Discord/WhatsApp/DeBox/…)
-├── llm/          # LLM clients/providers
-├── memory/       # conversation + vector storage
-├── planner/      # planning strategies
-├── protocol/     # message protocol
-├── sandbox/      # sandbox execution (simplified)
-├── scheduler/    # task scheduler
-├── skills/       # builtin + dynamic skills
-└── web/          # Web UI server + REST API + static dashboard
+├── agent/       # Agent loop, context builder, hub/coordination
+├── bus/         # Event-driven message bus (events, queue)
+├── config/      # Config schema and loader (~/.vai/config.json)
+├── cron/        # Cron job types and scheduler
+├── cli/         # CLI console and commands
+├── gateway/     # Platform adapters (Telegram/Discord/WhatsApp/DeBox/…)
+├── heartbeat/   # Heartbeat service for proactive tasks
+├── llm/         # LLM clients/providers
+├── memory/      # Store, persistent, daily_notes, long_term, embeddings
+├── planner/     # Planning strategies
+├── protocol/    # Message protocol
+├── sandbox/     # Sandbox execution (simplified)
+├── scheduler/   # Task scheduler
+├── skills/      # Registry, builtin, dynamic, markdown skills
+├── workspace/   # Workspace manager and templates (~/.vai/workspace/)
+└── web/         # Web UI server + REST API + static dashboard
 ```
+
+See **[arch.md](arch.md)** for architecture details and data flow.
 
 ## Notes on current Web UI behavior
 

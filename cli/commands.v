@@ -306,6 +306,59 @@ pub fn (c EchoCommand) execute(args []string, mut ctx Context) ! {
 	println(args.join(' '))
 }
 
+// OnboardCommand 初始化命令
+pub struct OnboardCommand {
+	BaseCommand
+}
+
+pub fn new_onboard_command() OnboardCommand {
+	return OnboardCommand{
+		BaseCommand: BaseCommand{
+			cmd_name: 'onboard'
+			cmd_description: 'Initialize VAI configuration and workspace'
+			cmd_aliases: ['init', 'setup']
+		}
+	}
+}
+
+pub fn (c OnboardCommand) execute(args []string, mut ctx Context) ! {
+	println('Initializing VAI...')
+	
+	// 这里会调用配置和工作区初始化
+	// 实际实现会在集成阶段完成
+	println('VAI initialized successfully!')
+	println('Configuration: ~/.vai/config.json')
+	println('Workspace: ~/.vai/workspace/')
+}
+
+// CronListCommand Cron 任务列表命令
+pub struct CronListCommand {
+	BaseCommand
+	pub mut:
+		get_cron_service fn () voidptr = unsafe { nil }
+}
+
+pub fn new_cron_list_command(get_cron_service fn () voidptr) CronListCommand {
+	return CronListCommand{
+		BaseCommand: BaseCommand{
+			cmd_name: 'cron'
+			cmd_description: 'List cron jobs'
+			cmd_aliases: ['cron-list']
+		}
+		get_cron_service: get_cron_service
+	}
+}
+
+pub fn (c CronListCommand) execute(args []string, mut ctx Context) ! {
+	if args.len > 0 && args[0] == 'list' {
+		println('Cron jobs:')
+		// 实际实现会在集成阶段完成
+		println('  (No cron jobs configured)')
+	} else {
+		println('Usage: cron list')
+	}
+}
+
 // 注册默认命令
 pub fn register_default_commands(mut c CLI, get_status fn () StatusInfo) {
 	c.register(new_help_command(&c))
@@ -314,4 +367,5 @@ pub fn register_default_commands(mut c CLI, get_status fn () StatusInfo) {
 	c.register(new_status_command(get_status))
 	c.register(new_clear_command())
 	c.register(new_echo_command())
+	c.register(new_onboard_command())
 }

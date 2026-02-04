@@ -1,0 +1,33 @@
+# V 编译产物
+/vai
+*.dylib
+*.so
+*.dll
+*.exe
+
+
+
+# 环境与本地配置（含密钥）
+.env
+.env.local
+.env.*.local
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 日志与临时
+*.log
+/tmp/
+/temp/
+.cache/
+
+# 本地工作区副本（若在仓库内做测试）
+# ~/.vai 在用户目录，一般不在此仓库内

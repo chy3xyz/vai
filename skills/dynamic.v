@@ -37,9 +37,8 @@ pub enum DynamicSkillType {
 pub fn new_dynamic_loader() DynamicSkillLoader {
 	return DynamicSkillLoader{
 		skill_dirs: [
+			os.join_path(os.home_dir(), '.vai', 'workspace', 'skills'),
 			os.join_path(os.home_dir(), '.vai', 'skills'),
-			'./skills',
-			'./plugins/skills',
 		]
 		loaded_skills: map[string]DynamicSkill{}
 	}
@@ -75,7 +74,14 @@ fn (mut l DynamicSkillLoader) load_from_directory(dir string) ![]DynamicSkill {
 	for entry in entries {
 		path := os.join_path(dir, entry)
 		
-		if entry.ends_with('.skill.json') {
+		if entry.ends_with('.md') && entry != 'README.md' {
+			// 加载 Markdown 技能（需要导入 markdown 模块）
+			// skill := l.load_markdown_skill(path) or { continue }
+			// skills_list << skill
+			// 注意：Markdown 技能由 MarkdownSkillLoader 处理
+			continue
+		}
+		else if entry.ends_with('.skill.json') {
 			// 加载配置式技能
 			skill := l.load_config_skill(path) or { continue }
 			skills_list << skill

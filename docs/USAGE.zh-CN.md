@@ -1,7 +1,7 @@
 # VAI 使用指南（中文）
 *(English version: [`docs/USAGE.md`](USAGE.md))*
 
-本文档以本仓库**当前实现**为准（参考 `vai.v`、`web/`、`gateway/`、`llm/`），目标是让你可以“照抄命令就能跑起来”。
+本文档以本仓库**当前实现**为准（参考 `vai.v`、`config/`、`workspace/`、`bus/`、`agent/`、`web/`、`gateway/`、`llm/`），目标是让你可以“照抄命令就能跑起来”。
 
 ## 快速开始
 
@@ -13,7 +13,17 @@ v -prod .
 ./vai --help
 ```
 
-### 2）选择一个 LLM 提供商（三选一即可）
+### 2）首次使用（初始化）
+
+执行一次初始化，会创建 `~/.vai/config.json` 和 `~/.vai/workspace/`（含 AGENTS.md、SOUL.md、USER.md、memory/MEMORY.md 等模板）：
+
+```bash
+./vai onboard
+```
+
+等价命令：`vai init`、`vai setup`。完成后编辑 `~/.vai/config.json` 填入 API Key 和模型等配置。
+
+### 3）选择一个 LLM 提供商（三选一即可，也可在 config.json 中配置）
 
 - **OpenAI**
 
@@ -38,6 +48,17 @@ ollama serve
 ## 运行模式
 
 CLI 入口在 `vai.v`，目前支持以下模式：
+
+### 命令一览
+
+| 命令           | 说明                     |
+|----------------|--------------------------|
+| `vai onboard`  | 初始化配置与工作区       |
+| `vai chat`     | 交互式聊天               |
+| `vai cli`      | CLI 控制台               |
+| `vai web`      | 启动 Web UI              |
+| `vai cron list`| 列出定时任务             |
+| `vai`（无参数）| 默认服务模式（网关 + Agent）|
 
 ### Web Dashboard
 
@@ -85,6 +106,11 @@ CLI 入口在 `vai.v`，目前支持以下模式：
 - `WHATSAPP_PHONE_ID`、`WHATSAPP_TOKEN`
 - `DISCORD_BOT_TOKEN`
 - `DEBOX_APP_ID`、`DEBOX_APP_SECRET`
+
+### 配置文件与工作区
+
+- **配置文件**：`~/.vai/config.json`（由 `vai onboard` 创建）。结构包含 `providers`、`agents.defaults`、`tools`、`workspace`、`cron` 等。环境变量会覆盖对应项（如 `VAI_DEFAULT_MODEL`、`VAI_WORKSPACE`）。
+- **工作区**：`~/.vai/workspace/` 下包含 `memory/`（如 MEMORY.md、每日笔记 YYYY-MM-DD.md）、模板文件及技能目录等。详见 `arch.md`。
 
 ## Web UI 与 REST API
 
@@ -147,6 +173,10 @@ export VAI_DEFAULT_MODEL="gpt-4o-mini"
 ollama serve
 ./vai web
 ```
+
+## 架构说明
+
+组件概览、数据流与配置/工作区路径见仓库根目录 **[arch.md](../arch.md)**。
 
 ## 排错（Troubleshooting）
 

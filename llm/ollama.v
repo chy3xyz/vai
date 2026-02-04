@@ -3,6 +3,7 @@ module llm
 
 import net.http
 import json
+import os
 
 // OllamaClient Ollama 客户端
 pub struct OllamaClient {
@@ -98,7 +99,12 @@ pub struct OllamaEmbeddingResponse {
 
 // 创建 Ollama 客户端
 pub fn new_ollama_client() &OllamaClient {
-	return new_ollama_client_with_url('http://localhost:11434')
+	mut client := new_ollama_client_with_url('http://localhost:11434')
+	// 环境变量 VAI_OLLAMA_MODEL 可覆盖默认模型（如 gemma2、llama3.2）
+	if model := os.getenv_opt('VAI_OLLAMA_MODEL') {
+		client.default_model = model
+	}
+	return client
 }
 
 // 创建指定 URL 的 Ollama 客户端
@@ -106,7 +112,7 @@ pub fn new_ollama_client_with_url(base_url string) &OllamaClient {
 	mut client := &OllamaClient{
 		BaseClient: new_base_client('', base_url)
 	}
-	client.default_model = 'llama3.2'
+	client.default_model = 'gemma3:4b'
 	return client
 }
 
@@ -115,9 +121,21 @@ pub fn (c &OllamaClient) name() string {
 	return 'ollama'
 }
 
+// 判断是否为 Ollama 本地模型名（不含 OpenRouter 风格的前缀如 gemini/）
+fn (c &OllamaClient) resolve_model(request_model string) string {
+	if request_model.len == 0 {
+		return c.default_model
+	}
+	// OpenRouter/API 风格模型名如 "gemini/gemma3:4" 在 Ollama 中不存在，使用默认
+	if request_model.contains('/') {
+		return c.default_model
+	}
+	return request_model
+}
+
 // 发送补全请求
 pub fn (c &OllamaClient) complete(request CompletionRequest) !CompletionResponse {
-	model := if request.model.len > 0 { request.model } else { c.default_model }
+	model := c.resolve_model(request.model)
 	
 	mut messages := request.messages.clone()
 	
@@ -173,7 +191,7 @@ pub fn (c &OllamaClient) complete(request CompletionRequest) !CompletionResponse
 
 // 发送流式补全请求
 pub fn (c &OllamaClient) complete_stream(request CompletionRequest, callback fn (chunk CompletionChunk)) ! {
-	model := if request.model.len > 0 { request.model } else { c.default_model }
+	model := c.resolve_model(request.model)
 	
 	mut messages := request.messages.clone()
 	

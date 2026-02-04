@@ -15,12 +15,17 @@ import llm {
 	user_message, system_message, CompletionRequest
 }
 import skills { Registry, new_registry, register_builtin_skills, Value, SkillContext }
-import memory { MemoryStore, new_memory_store, new_ollama_embedder, new_simple_index }
+import memory { PersistentStore, new_persistent_store }
 import planner as _
 import sandbox { SandboxManager, new_sandbox_manager }
-import cli { new_cli, register_default_commands, StatusInfo }
-import agent { AgentHub, new_hub, BaseAgent, new_base_agent, AgentRole }
+import cli { new_cli, register_default_commands, StatusInfo, new_onboard_command }
+import agent { AgentHub, new_hub, BaseAgent, new_base_agent, AgentRole, AgentLoop, new_agent_loop }
 import web { new_web_app, WebConfig }
+import config { load_config, init_config, Config }
+import workspace { new_workspace_manager, workspace_from_config }
+import bus { new_message_bus, MessageBus, new_message_event }
+import cron { new_cron_service, CronService }
+import heartbeat { new_heartbeat_service, HeartbeatService }
 import utils
 import os
 import time
@@ -35,49 +40,89 @@ pub struct VAIAgent {
 		gateway_mgr    GatewayManager
 		llm_mgr        LLMManager
 		skills_registry Registry
-		memory_store   MemoryStore
+		memory_store   &PersistentStore  // 统一使用持久化存储
 		sandbox_mgr    SandboxManager
 		conversations  map[string]Conversation
 		running        bool
-		config         AgentConfig
+		config         Config  // 统一使用新配置系统
+		workspace_mgr  workspace.WorkspaceManager
+		message_bus    &MessageBus
+		agent_loop     &AgentLoop
+		cron_service   &CronService
+		heartbeat_service &HeartbeatService
 		// 统计
 		start_time     time.Time
 		messages_processed int
-}
-
-// AgentConfig Agent 配置
-pub struct AgentConfig {
-	pub mut:
-		openai_api_key       string
-		openrouter_api_key   string
-		telegram_bot_token   string
-		whatsapp_session_id  string
-		whatsapp_phone_id    string
-		whatsapp_token       string
-		discord_bot_token    string
-		debox_app_id         string
-		debox_app_secret     string
-		default_model        string = 'gpt-4o-mini'
-		ollama_model         string = 'llama3.2'
-		workers              int = 4
-		system_prompt        string = 'You are a helpful AI assistant.'
-		working_dir          string = '.'
-}
+	}
 
 // 创建新的 VAI Agent
-pub fn new_agent(config AgentConfig) &VAIAgent {
+pub fn new_agent(config_data Config) !&VAIAgent {
+	// 创建工作区管理器
+	mut workspace_mgr := workspace_from_config(config_data)
+	workspace_mgr.init()!
+
+	// 创建持久化存储（统一使用）
+	memory_store := new_persistent_store(workspace_mgr.get_path())!
+
+	// 创建消息总线
+	message_bus := new_message_bus()
+
+	// 创建技能注册表
+	skills_registry := new_registry()
+
+	// 创建 LLM 管理器
+	mut llm_mgr := new_llm_manager()
+
+	// 注册 LLM 提供商
+	if openai_cfg := config_data.providers.openai {
+		mut openai := new_openai_client(openai_cfg.api_key)
+		llm_mgr.register('openai', openai)
+	}
+	if openrouter_cfg := config_data.providers.openrouter {
+		mut openrouter := new_openrouter_client(openrouter_cfg.api_key)
+		llm_mgr.register('openrouter', openrouter)
+	}
+	mut ollama := new_ollama_client()
+	_ := config_data.providers.ollama  // 可以设置 base_url
+	llm_mgr.register('ollama', ollama)
+
+	// 获取默认 LLM 提供商
+	default_provider := llm_mgr.get_default_provider() or {
+		return error('no LLM provider available')
+	}
+
+	// 创建 Agent 循环
+	agent_loop := new_agent_loop(
+		unsafe { memory_store },
+		unsafe { &skills_registry },
+		unsafe { default_provider },
+		unsafe { message_bus },
+		config_data.agents.defaults.system_prompt
+	)
+
+	// 创建 Cron 服务
+	cron_service := new_cron_service()
+
+	// 创建心跳服务
+	heartbeat_service := new_heartbeat_service()
+
 	return &VAIAgent{
 		name: 'vai'
-		version: '0.2.0'
-		scheduler: new_scheduler(config.workers)
+		version: '0.3.0'
+		scheduler: new_scheduler(4)
 		gateway_mgr: new_gateway_manager()
-		llm_mgr: new_llm_manager()
-		skills_registry: new_registry()
-		memory_store: new_memory_store()
+		llm_mgr: llm_mgr
+		skills_registry: skills_registry
+		memory_store: &memory_store
 		sandbox_mgr: new_sandbox_manager()
 		conversations: map[string]Conversation{}
 		running: false
-		config: config
+		config: config_data
+		workspace_mgr: workspace_mgr
+		message_bus: message_bus
+		agent_loop: &agent_loop
+		cron_service: cron_service
+		heartbeat_service: heartbeat_service
 		start_time: time.now()
 		messages_processed: 0
 	}
@@ -91,57 +136,51 @@ pub fn (mut vai_agent VAIAgent) init() ! {
 	vai_agent.scheduler.start()!
 	println(term_green('✓ Scheduler started'))
 
-	// 注册 LLM 提供商
-	if vai_agent.config.openai_api_key.len > 0 {
-		mut openai := new_openai_client(vai_agent.config.openai_api_key)
-		vai_agent.llm_mgr.register('openai', openai)
-		println(term_green('✓ Registered OpenAI provider'))
+	// 启动消息总线
+	vai_agent.message_bus.start()
+	println(term_green('✓ Message bus started'))
+
+	// 启动 Agent 循环
+	vai_agent.agent_loop.start()
+	println(term_green('✓ Agent loop started'))
+
+	// 启动 Cron 服务
+	if vai_agent.config.cron.enabled {
+		vai_agent.cron_service.start()
+		println(term_green('✓ Cron service started'))
 	}
 
-	// 注册 OpenRouter
-	if vai_agent.config.openrouter_api_key.len > 0 {
-		mut openrouter := new_openrouter_client(vai_agent.config.openrouter_api_key)
-		vai_agent.llm_mgr.register('openrouter', openrouter)
-		println(term_green('✓ Registered OpenRouter provider'))
-	}
+	// 启动心跳服务
+	vai_agent.heartbeat_service.start()
+	println(term_green('✓ Heartbeat service started'))
 
-	// 尝试连接本地 Ollama
-	mut ollama := new_ollama_client()
-	vai_agent.llm_mgr.register('ollama', ollama)
-	println(term_green('✓ Registered Ollama provider (local)'))
-
-	// 注册网关适配器
-	if vai_agent.config.telegram_bot_token.len > 0 {
-		mut telegram := new_telegram_adapter(vai_agent.config.telegram_bot_token)
+	// 注册网关适配器（从环境变量读取）
+	if telegram_token := os.getenv_opt('TELEGRAM_BOT_TOKEN') {
+		mut telegram := new_telegram_adapter(telegram_token)
 		vai_agent.gateway_mgr.register(telegram)
 		println(term_green('✓ Registered Telegram adapter'))
 	}
-
-	if vai_agent.config.whatsapp_session_id.len > 0 {
-		mut whatsapp := new_whatsapp_adapter(vai_agent.config.whatsapp_session_id)
-		vai_agent.gateway_mgr.register(whatsapp)
-		println(term_green('✓ Registered WhatsApp adapter'))
+	
+	if whatsapp_phone_id := os.getenv_opt('WHATSAPP_PHONE_ID') {
+		if whatsapp_token := os.getenv_opt('WHATSAPP_TOKEN') {
+			mut whatsapp_business := new_whatsapp_business_adapter(whatsapp_phone_id, whatsapp_token)
+			vai_agent.gateway_mgr.register(whatsapp_business)
+			println(term_green('✓ Registered WhatsApp Business adapter'))
+		}
 	}
-
-	if vai_agent.config.whatsapp_phone_id.len > 0 && vai_agent.config.whatsapp_token.len > 0 {
-		mut whatsapp_business := new_whatsapp_business_adapter(
-			vai_agent.config.whatsapp_phone_id,
-			vai_agent.config.whatsapp_token
-		)
-		vai_agent.gateway_mgr.register(whatsapp_business)
-		println(term_green('✓ Registered WhatsApp Business adapter'))
-	}
-
-	if vai_agent.config.discord_bot_token.len > 0 {
-		mut discord := new_discord_adapter(vai_agent.config.discord_bot_token)
+	
+	if discord_token := os.getenv_opt('DISCORD_BOT_TOKEN') {
+		mut discord := new_discord_adapter(discord_token)
 		vai_agent.gateway_mgr.register(discord)
 		println(term_green('✓ Registered Discord adapter'))
 	}
-
-	if vai_agent.config.debox_app_id.len > 0 && vai_agent.config.debox_app_secret.len > 0 {
-		mut debox := new_debox_adapter(vai_agent.config.debox_app_id, vai_agent.config.debox_app_secret)
-		vai_agent.gateway_mgr.register(debox)
-		println(term_green('✓ Registered DeBox adapter'))
+	
+	if debox_app_id := os.getenv_opt('DEBOX_APP_ID') {
+		if debox_app_secret := os.getenv_opt('DEBOX_APP_SECRET') {
+			mut debox := new_debox_adapter(debox_app_id, debox_app_secret)
+			vai_agent.gateway_mgr.register(debox)
+			println(term_green('✓ Registered DeBox adapter'))
+		}
 	}
 
 	// 注册内置技能
@@ -166,16 +205,19 @@ pub fn (mut vai_agent VAIAgent) start() ! {
 	println(term_green('\\nVAI Agent is running!'))
 	println('Press Ctrl+C to stop.\\n')
 
-	// 主事件循环
+	// 主事件循环 - 使用消息总线
 	inbound_ch := vai_agent.gateway_mgr.inbound_channel()
 	for vai_agent.running {
 		select {
 			msg := <-inbound_ch {
-				vai_agent.handle_message(msg)
+				// 发布消息事件到消息总线
+				msg_event := new_message_event(msg)
+				vai_agent.message_bus.publish(msg_event) or {
+					eprintln('Failed to publish message: ${err}')
+				}
 			}
 			else {
 				// 超时继续，检查 running 状态
-				// Use sleep to prevent busy loop
 				time.sleep(100 * time.millisecond)
 			}
 		}
@@ -187,6 +229,9 @@ pub fn (mut vai_agent VAIAgent) stop() {
 	vai_agent.running = false
 	vai_agent.gateway_mgr.stop_all() or { eprintln('Error stopping gateways: ${err}') }
 	vai_agent.scheduler.stop()
+	vai_agent.message_bus.stop()
+	vai_agent.cron_service.stop()
+	vai_agent.heartbeat_service.stop()
 	vai_agent.sandbox_mgr.cleanup_all()
 	println(term_cyan('\\nVAI Agent stopped.'))
 }
@@ -228,24 +273,9 @@ fn (mut vai_agent VAIAgent) process_message(msg Message) ! {
 		return
 	}
 
-	// 调用 LLM 生成回复
-	llm_response := vai_agent.chat_with_llm(conversation) or {
-		eprintln('LLM error: ${err}')
-		return
-	}
-
-	// 创建回复消息
-	mut reply := new_text_message(llm_response)
-	reply.receiver_id = msg.sender_id
-	reply.platform = msg.platform
-
-	// 添加 AI 回复到会话
-	vai_agent.memory_store.add_message(conversation_id, reply) or {}
-
-	// 发送回复
-	vai_agent.gateway_mgr.send_to_platform(msg.platform, reply) or {
-		eprintln('Failed to send reply: ${err}')
-	}
+	// 消息已通过消息总线处理，AgentLoop 会生成响应
+	// 这里只需要等待响应事件（简化实现）
+	// 实际应该通过消息总线订阅响应事件
 }
 
 // 处理命令
@@ -299,12 +329,30 @@ fn (mut vai_agent VAIAgent) handle_command(msg Message, conversation_id string) 
 			}
 			reply.content = protocol.TextContent{ text: content, format: 'markdown' }
 		}
+		'cron' {
+			if args.len > 0 && args[0] == 'list' {
+				jobs := vai_agent.cron_service.list_jobs()
+				mut content := '**Cron Jobs:**\\n'
+				if jobs.len == 0 {
+					content += '\\nNo cron jobs configured.'
+				} else {
+					for job in jobs {
+						status := if job.enabled { 'enabled' } else { 'disabled' }
+						content += '\\n• ${job.id}: ${job.description} (${job.schedule}) [${status}]'
+					}
+				}
+				reply.content = protocol.TextContent{ text: content, format: 'markdown' }
+			} else {
+				reply.content = protocol.TextContent{ text: 'Usage: /cron list' }
+			}
+		}
 		'help' {
 			content := '**Available Commands:**\\n' +
 				'\\n/skills - List available skills' +
 				'\\n/models - List available models' +
 				'\\n/status - Show system status' +
 				'\\n/memory <query> - Search conversation memory' +
+				'\\n/cron list - List cron jobs' +
 				'\\n/help - Show this help'
 			reply.content = protocol.TextContent{ text: content, format: 'markdown' }
 		}
@@ -321,7 +369,7 @@ fn (mut vai_agent VAIAgent) handle_command(msg Message, conversation_id string) 
 // 与 LLM 对话
 fn (mut vai_agent VAIAgent) chat_with_llm(conversation Conversation) !string {
 	// 构建消息历史
-	mut messages := [system_message(vai_agent.config.system_prompt)]
+	mut messages := [system_message(vai_agent.config.agents.defaults.system_prompt)]
 
 	for msg in conversation.last_messages(10) {
 		if content := msg.text() {
@@ -339,10 +387,10 @@ fn (mut vai_agent VAIAgent) chat_with_llm(conversation Conversation) !string {
 
 	// 发送请求
 	request := CompletionRequest{
-		model: vai_agent.config.default_model
+		model: vai_agent.config.agents.defaults.model
 		messages: messages
-		temperature: 0.7
-		max_tokens: 2000
+		temperature: f32(vai_agent.config.agents.defaults.temperature)
+		max_tokens: vai_agent.config.agents.defaults.max_tokens
 	}
 
 	provider := vai_agent.llm_mgr.get_default_provider() or {
@@ -361,7 +409,7 @@ fn (mut vai_agent VAIAgent) chat_with_llm(conversation Conversation) !string {
 			skill_ctx := skills.SkillContext{
 				session_id: conversation.id
 				user_id: 'user'
-				working_dir: vai_agent.config.working_dir
+				working_dir: vai_agent.workspace_mgr.get_path()
 			}
 
 			result := vai_agent.skills_registry.execute(tool_call.function.name, args, skill_ctx) or {
@@ -447,51 +495,42 @@ fn (mut vai_agent VAIAgent) start_cli() {
 
 // 主函数
 fn main() {
-	mut config := AgentConfig{}
-
-	// 从环境变量读取配置
-	if api_key := os.getenv_opt('OPENAI_API_KEY') {
-		config.openai_api_key = api_key
+	// 检查命令行参数
+	if os.args.len > 1 {
+		match os.args[1] {
+			'onboard', 'init', 'setup' {
+				handle_onboard() or {
+					eprintln('Failed to initialize: ${err}')
+					exit(1)
+				}
+				return
+			}
+			'version' {
+				println('VAI v0.3.0')
+				return
+			}
+			'help', '--help', '-h' {
+				show_help()
+				return
+			}
+			else {
+				// 继续执行，让后续代码处理其他命令
+			}
+		}
 	}
 
-	if api_key := os.getenv_opt('OPENROUTER_API_KEY') {
-		config.openrouter_api_key = api_key
-	}
-
-	if bot_token := os.getenv_opt('TELEGRAM_BOT_TOKEN') {
-		config.telegram_bot_token = bot_token
-	}
-
-	if phone_id := os.getenv_opt('WHATSAPP_PHONE_ID') {
-		config.whatsapp_phone_id = phone_id
-	}
-
-	if token := os.getenv_opt('WHATSAPP_TOKEN') {
-		config.whatsapp_token = token
-	}
-
-	if bot_token := os.getenv_opt('DISCORD_BOT_TOKEN') {
-		config.discord_bot_token = bot_token
-	}
-
-	if app_id := os.getenv_opt('DEBOX_APP_ID') {
-		config.debox_app_id = app_id
-	}
-
-	if app_secret := os.getenv_opt('DEBOX_APP_SECRET') {
-		config.debox_app_secret = app_secret
-	}
-
-	if model := os.getenv_opt('VAI_DEFAULT_MODEL') {
-		config.default_model = model
-	}
-
-	if model := os.getenv_opt('VAI_OLLAMA_MODEL') {
-		config.ollama_model = model
+	// 加载配置
+	config_data := load_config() or {
+		eprintln('Failed to load config: ${err}')
+		eprintln('Run "vai onboard" to initialize configuration.')
+		exit(1)
 	}
 
 	// 创建 Agent
-	mut vai := new_agent(config)
+	mut vai := new_agent(config_data) or {
+		eprintln('Failed to create agent: ${err}')
+		exit(1)
+	}
 
 	// 初始化
 	vai.init() or {
@@ -510,14 +549,24 @@ fn main() {
 			'cli', 'console' {
 				vai.start_cli()
 			}
-			'version' {
-				println('VAI v${vai.version}')
-			}
 			'web', 'server' {
 				start_web_ui(vai)
 			}
-			'help', '--help', '-h' {
-				show_help()
+			'cron' {
+				if os.args.len > 2 && os.args[2] == 'list' {
+					jobs := vai.cron_service.list_jobs()
+					println('Cron jobs:')
+					if jobs.len == 0 {
+						println('  (No cron jobs configured)')
+					} else {
+						for job in jobs {
+							status := if job.enabled { 'enabled' } else { 'disabled' }
+							println('  ${job.id}: ${job.description} (${job.schedule}) [${status}]')
+						}
+					}
+				} else {
+					println('Usage: vai cron list')
+				}
 			}
 			else {
 				println('Unknown command: ${os.args[1]}')
@@ -525,6 +574,8 @@ fn main() {
 			}
 		}
 		return
+	} else {
+		// 无参数时的默认行为
 	}
 
 	// 默认启动服务模式
@@ -533,29 +584,45 @@ fn main() {
 	}
 }
 
+// 处理 onboard 命令
+fn handle_onboard() ! {
+	println(term_cyan('Initializing VAI...'))
+	
+	// 初始化配置
+	config_data := init_config()!
+	println(term_green('✓ Configuration initialized'))
+	
+	// 初始化工作区
+	mut workspace_mgr := workspace_from_config(config_data)
+	workspace_mgr.init()!
+	println(term_green('✓ Workspace initialized'))
+	
+	println(term_cyan('\\nVAI initialized successfully!'))
+	println('Configuration: ~/.vai/config.json')
+	println('Workspace: ~/.vai/workspace/')
+	println('\\nEdit ~/.vai/config.json to add your API keys.')
+}
+
 fn show_help() {
-	println('VAI - V AI Infrastructure v0.2.0')
+	println('VAI - V AI Infrastructure v0.3.0')
 	println('')
 	println('Usage:')
 	println('  vai [command]')
 	println('')
 	println('Commands:')
+	println('  onboard      Initialize configuration and workspace')
 	println('  chat         Start interactive chat mode')
 	println('  cli          Start CLI console')
 	println('  web          Start Web UI server')
+	println('  cron list    List cron jobs')
 	println('  version      Show version')
 	println('  help         Show this help message')
 	println('')
-	println('Environment Variables:')
-	println('  OPENAI_API_KEY        OpenAI API key')
-	println('  OPENROUTER_API_KEY    OpenRouter API key')
-	println('  TELEGRAM_BOT_TOKEN    Telegram bot token')
-	println('  WHATSAPP_PHONE_ID     WhatsApp Business phone ID')
-	println('  WHATSAPP_TOKEN        WhatsApp Business token')
-	println('  DISCORD_BOT_TOKEN     Discord bot token')
-	println('  DEBOX_APP_ID          DeBox app ID')
-	println('  DEBOX_APP_SECRET      DeBox app secret')
-	println('  VAI_DEFAULT_MODEL     Default LLM model')
+	println('Configuration:')
+	println('  Configuration file: ~/.vai/config.json')
+	println('  Workspace: ~/.vai/workspace/')
+	println('')
+	println('Run "vai onboard" to initialize VAI for the first time.')
 }
 
 // term 辅助函数
