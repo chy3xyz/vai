@@ -11,26 +11,28 @@ pub interface PlatformAdapter {
 	// 获取平台名称
 	name() string
 	
-	// 连接平台
-	connect() !
-	
-	// 断开连接
-	disconnect() !
-	
-	// 发送消息
-	send_message(msg Message) !
-	
-	// 接收消息（阻塞）
-	receive_message() !Message
-	
-	// 设置消息处理器
-	set_message_handler(handler fn (Message))
-	
 	// 获取连接状态
 	is_connected() bool
 	
-	// 获取用户信息
-	get_user_info(user_id string) !UserInfo
+	// 需要修改状态的方法
+	mut:
+		// 连接平台
+		connect() !
+		
+		// 断开连接
+		disconnect() !
+		
+		// 发送消息
+		send_message(msg Message) !
+		
+		// 接收消息（阻塞）
+		receive_message() !Message
+		
+		// 设置消息处理器
+		set_message_handler(handler fn (Message))
+		
+		// 获取用户信息
+		get_user_info(user_id string) !UserInfo
 }
 
 // UserInfo 用户信息
@@ -140,7 +142,7 @@ pub fn (mut gm GatewayManager) start_all() ! {
 		})
 		
 		// 启动接收循环
-		spawn gm.receive_loop(adapter)
+		spawn gm.receive_loop(mut adapter)
 	}
 }
 
@@ -152,7 +154,7 @@ pub fn (mut gm GatewayManager) stop_all() ! {
 }
 
 // 接收循环
-fn (mut gm GatewayManager) receive_loop(adapter PlatformAdapter) {
+fn (mut gm GatewayManager) receive_loop(mut adapter PlatformAdapter) {
 	for adapter.is_connected() {
 		msg := adapter.receive_message() or {
 			eprintln('Error receiving message from ${adapter.name()}: ${err}')
@@ -170,7 +172,7 @@ pub fn (gm &GatewayManager) inbound_channel() chan Message {
 
 // 发送消息到指定平台
 pub fn (mut gm GatewayManager) send_to_platform(platform string, msg Message) ! {
-	adapter := gm.adapters[platform] or {
+	mut adapter := gm.adapters[platform] or {
 		return error('platform ${platform} not found')
 	}
 	adapter.send_message(msg)!

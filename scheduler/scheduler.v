@@ -1,6 +1,6 @@
 // vai.runtime - 协程调度器与事件循环
 // 基于 V 语言 channel 实现 CSP 模型，支持 I/O 多路复用
-module runtime
+module scheduler
 
 import time
 import sync
@@ -9,7 +9,7 @@ import sync
 pub struct Task {
 	pub mut:
 		id        string
-		exec      fn () !  // 任务执行函数
+		exec      fn () ! @[required] // 任务执行函数
 		priority  int      // 优先级，数值越小优先级越高
 		deadline  ?time.Time  // 可选的截止时间
 }
@@ -31,7 +31,7 @@ pub struct EventLoop {
 	pub mut:
 		running     bool
 		poll_interval_ms int
-		io_handlers map[string]fn (data any) !  // I/O 事件处理器
+		io_handlers map[string]fn (data voidptr) !  // I/O 事件处理器
 		timers      []Timer
 }
 
@@ -40,7 +40,7 @@ pub struct Timer {
 	pub mut:
 		id       string
 		fire_at  time.Time
-		callback fn ()
+		callback fn () @[required]
 		repeat   bool
 		interval time.Duration
 }
@@ -61,7 +61,7 @@ fn new_event_loop() &EventLoop {
 	return &EventLoop{
 		running: false
 		poll_interval_ms: 10
-		io_handlers: map[string]fn (data any) !{}
+		io_handlers: map[string]fn (data voidptr) !{}
 		timers: []
 	}
 }
@@ -198,13 +198,13 @@ pub fn (mut el EventLoop) add_timer(id string, duration time.Duration, repeat bo
 }
 
 // 注册 I/O 处理器
-pub fn (mut el EventLoop) register_handler(event_type string, handler fn (data any) !) {
+pub fn (mut el EventLoop) register_handler(event_type string, handler fn (data voidptr) !) {
 	el.io_handlers[event_type] = handler
 }
 
 // 生成任务 ID
 fn generate_task_id() string {
-	return 'task_${time.now().unix_micro}_${rand_id()}'
+	return 'task_${time.now().unix_micro()}_${rand_id()}'
 }
 
 // 简单的随机 ID 生成
@@ -212,7 +212,8 @@ fn rand_id() string {
 	chars := 'abcdefghijklmnopqrstuvwxyz0123456789'
 	mut result := ''
 	for i := 0; i < 8; i++ {
-		result += chars[time.now().unix % chars.len].ascii_str()
+		unix_time := time.now().unix()
+		result += chars[unix_time % chars.len].ascii_str()
 		time.sleep(1 * time.microsecond)
 	}
 	return result
@@ -221,26 +222,26 @@ fn rand_id() string {
 // RuntimeContext 运行时上下文，用于跨任务传递信息
 pub struct RuntimeContext {
 	pub mut:
-		vars map[string]any
+		vars map[string]voidptr
 		mu   sync.RwMutex
 }
 
 // 创建运行时上下文
 pub fn new_context() RuntimeContext {
 	return RuntimeContext{
-		vars: map[string]any{}
+		vars: map[string]voidptr{}
 	}
 }
 
 // 设置上下文变量
-pub fn (mut ctx RuntimeContext) set(key string, value any) {
+pub fn (mut ctx RuntimeContext) set(key string, value voidptr) {
 	ctx.mu.lock()
 	defer { ctx.mu.unlock() }
 	ctx.vars[key] = value
 }
 
 // 获取上下文变量
-pub fn (ctx RuntimeContext) get(key string) ?any {
+pub fn (mut ctx RuntimeContext) get(key string) ?voidptr {
 	ctx.mu.rlock()
 	defer { ctx.mu.runlock() }
 	return ctx.vars[key] or { return none }

@@ -5,6 +5,7 @@ module memory
 import net.http
 import json
 import llm
+import math
 
 // Embedder 嵌入生成器接口
 pub interface Embedder {
@@ -19,7 +20,6 @@ pub struct OllamaEmbedder {
 	pub mut:
 		model      string = 'nomic-embed-text'
 		base_url   string = 'http://localhost:11434'
-		http_client http.Client
 }
 
 // OllamaEmbeddingRequest 嵌入请求
@@ -52,12 +52,14 @@ pub fn (mut e OllamaEmbedder) embed(text string) ![]f32 {
 	
 	json_body := json.encode(req)
 	
-	mut http_req := http.new_request(.post, '${e.base_url}/api/embeddings', json_body)
-	http_req.header.add(.content_type, 'application/json')
-	
-	resp := e.http_client.do(http_req) or {
-		return error('failed to generate embedding: ${err}')
-	}
+	resp := http.fetch(
+		url: '${e.base_url}/api/embeddings'
+		method: .post
+		header: http.new_header_from_map({
+			.content_type: 'application/json'
+		})
+		data: json_body
+	)!
 	
 	if resp.status_code != 200 {
 		return error('embedding API error: ${resp.status_code}')
@@ -102,7 +104,6 @@ pub struct OpenAIEmbedder {
 		model      string = 'text-embedding-3-small'
 		api_key    string
 		base_url   string = 'https://api.openai.com/v1'
-		http_client http.Client
 }
 
 // OpenAIEmbeddingRequest 嵌入请求
@@ -110,6 +111,13 @@ pub struct OpenAIEmbeddingRequest {
 	pub:
 		model string @[json: 'model']
 		input string @[json: 'input']
+}
+
+// OpenAIEmbeddingBatchRequest 批量嵌入请求
+pub struct OpenAIEmbeddingBatchRequest {
+	pub:
+		model string   @[json: 'model']
+		input []string @[json: 'input']
 }
 
 // OpenAIEmbeddingResponse 嵌入响应
@@ -154,13 +162,15 @@ pub fn (mut e OpenAIEmbedder) embed(text string) ![]f32 {
 	
 	json_body := json.encode(req)
 	
-	mut http_req := http.new_request(.post, '${e.base_url}/embeddings', json_body)
-	http_req.header.add(.content_type, 'application/json')
-	http_req.header.add(.authorization, 'Bearer ${e.api_key}')
-	
-	resp := e.http_client.do(http_req) or {
-		return error('failed to generate embedding: ${err}')
-	}
+	resp := http.fetch(
+		url: '${e.base_url}/embeddings'
+		method: .post
+		header: http.new_header_from_map({
+			.content_type: 'application/json'
+			.authorization: 'Bearer ${e.api_key}'
+		})
+		data: json_body
+	)!
 	
 	if resp.status_code != 200 {
 		return error('embedding API error: ${resp.status_code}')
@@ -177,22 +187,23 @@ pub fn (mut e OpenAIEmbedder) embed(text string) ![]f32 {
 
 // 批量生成嵌入
 pub fn (mut e OpenAIEmbedder) embed_batch(texts []string) ![][]f32 {
-	// OpenAI 支持批量请求，这里简化处理
-	req := struct {
-		model string   @[json: 'model']
-		input []string @[json: 'input']
-	}{
+	// OpenAI 支持批量请求
+	req := OpenAIEmbeddingBatchRequest{
 		model: e.model
 		input: texts
 	}
 	
 	json_body := json.encode(req)
 	
-	mut http_req := http.new_request(.post, '${e.base_url}/embeddings', json_body)
-	http_req.header.add(.content_type, 'application/json')
-	http_req.header.add(.authorization, 'Bearer ${e.api_key}')
-	
-	resp := e.http_client.do(http_req)!
+	resp := http.fetch(
+		url: '${e.base_url}/embeddings'
+		method: .post
+		header: http.new_header_from_map({
+			.content_type: 'application/json'
+			.authorization: 'Bearer ${e.api_key}'
+		})
+		data: json_body
+	)!
 	
 	if resp.status_code != 200 {
 		return error('embedding API error: ${resp.status_code}')
@@ -236,7 +247,7 @@ pub struct Document {
 	pub:
 		id      string
 		content string
-		metadata map[string]any
+		metadata map[string]string
 }
 
 // 创建简单内存索引
@@ -254,7 +265,7 @@ pub fn (mut idx SimpleMemoryIndex) add_document(doc Document) ! {
 	embedding := idx.embedder.embed(doc.content)!
 	
 	// 存储向量
-	metadata := doc.metadata.clone()
+	mut metadata := doc.metadata.clone()
 	metadata['content'] = doc.content
 	
 	idx.store.store_vector(doc.id, embedding, metadata)!
@@ -292,7 +303,6 @@ pub fn normalize_vector(vector []f32) []f32 {
 	
 	norm := f32(math.sqrt(f64(sum)))
 	mut result := []f32{cap: vector.len}
-	
 	for v in vector {
 		result << v / norm
 	}
@@ -300,4 +310,25 @@ pub fn normalize_vector(vector []f32) []f32 {
 	return result
 }
 
-import math
+// 计算余弦相似度
+pub fn cosine_similarity(a []f32, b []f32) f32 {
+	if a.len != b.len {
+		return 0.0
+	}
+	
+	mut dot_product := f32(0.0)
+	mut norm_a := f32(0.0)
+	mut norm_b := f32(0.0)
+	
+	for i in 0 .. a.len {
+		dot_product += a[i] * b[i]
+		norm_a += a[i] * a[i]
+		norm_b += b[i] * b[i]
+	}
+	
+	if norm_a == 0.0 || norm_b == 0.0 {
+		return 0.0
+	}
+	
+	return dot_product / (f32(math.sqrt(f64(norm_a))) * f32(math.sqrt(f64(norm_b))))
+}

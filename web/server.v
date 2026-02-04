@@ -2,10 +2,26 @@
 // 提供 Web 界面和 REST API
 module web
 
-import net.http
 import json
-import time
 import os
+import net
+import time
+
+// Request HTTP 请求（简化版）
+pub struct Request {
+	pub:
+		method string
+		url    string
+		data   string
+}
+
+// Response HTTP 响应
+pub struct Response {
+	pub:
+		status_code  int = 200
+		headers map[string]string
+		body    string
+}
 
 // Server Web 服务器
 pub struct Server {
@@ -16,50 +32,43 @@ pub struct Server {
 		middleware []Middleware
 		static_dir string = 'static'
 		running    bool
-		on_start   fn ()
-		on_stop    fn ()
+		on_start   fn () = unsafe { nil }
+		on_stop    fn () = unsafe { nil }
+		listener   net.TcpListener
 }
 
 // Router 路由处理器
 pub struct Router {
 	pub mut:
-		routes     map[string]map[string]Handler  // method -> path -> handler
-		not_found  Handler
-		error_handler fn (Error) Response
+		routes     map[string]map[string]Handler
+		not_found  Handler = unsafe { nil }
+		error_handler fn (WebError) Response = unsafe { nil }
 }
 
 // Handler 请求处理器
 pub type Handler = fn (Context) Response
 
 // Middleware 中间件
-pub type Middleware = fn (Context) bool  // 返回 false 表示终止处理
+pub type Middleware = fn (mut Context) bool
 
 // Context 请求上下文
 pub struct Context {
 	pub:
-		request    http.Request
-		params     map[string]string  // URL 参数
-		query      map[string]string  // 查询参数
+		request    Request
+		params     map[string]string
+		query      map[string]string
 		body       string
 	pub mut:
-		status     int
+		status_code int
 		headers    map[string]string
-		data       map[string]any  // 中间件数据传递
+		data       map[string]string
 }
 
-// Response HTTP 响应
-pub struct Response {
+// WebError 错误信息
+pub struct WebError {
 	pub:
-		status  int = 200
-		headers map[string]string
-		body    string
-}
-
-// Error 错误信息
-pub struct Error {
-	pub:
-		code    int
-		message string
+		error_code    int
+		error_message string
 }
 
 // 创建 Web 服务器
@@ -79,13 +88,14 @@ pub fn new_server(host string, port int) &Server {
 		running: false
 		on_start: fn () {}
 		on_stop: fn () {}
+		listener: net.TcpListener{}
 	}
 }
 
 // 默认 404 处理器
 fn default_not_found_handler(ctx Context) Response {
 	return Response{
-		status: 404
+		status_code: 404
 		body: json.encode({
 			'error': 'Not Found'
 			'path': ctx.request.url
@@ -94,12 +104,12 @@ fn default_not_found_handler(ctx Context) Response {
 }
 
 // 默认错误处理器
-fn default_error_handler(err Error) Response {
+fn default_error_handler(err WebError) Response {
 	return Response{
-		status: err.code
+		status_code: err.error_code
 		body: json.encode({
-			'error': err.message
-			'code': err.code
+			'error': err.error_message
+			'code': err.error_code.str()
 		})
 	}
 }
@@ -138,88 +148,51 @@ pub fn (mut s Server) use(mw Middleware) {
 	s.middleware << mw
 }
 
-// 启动服务器
-pub fn (mut s Server) start() ! {
-	s.running = true
-	s.on_start()
-	
-	// 创建 HTTP 处理器
-	mut mux := http.Router{}
-	
-	// 注册 API 路由
-	mux.route('/api/', fn [s] (mut ctx http.Context) {
-		handle_api_request(s, mut ctx)
-	})
-	
-	// 静态文件服务
-	mux.route('/', fn [s] (mut ctx http.Context) {
-		handle_static_request(s, mut ctx)
-	})
-	
-	// 启动 HTTP 服务器
-	addr := '${s.host}:${s.port}'
-	println('Web server starting on http://${addr}')
-	
-	// 使用 V 的 http 模块启动服务器
-	go http.start_server(mux, addr)
+// 处理请求
+fn (mut s Server) handle_request(req Request) Response {
+	if !req.url.starts_with('/api/') {
+		return s.handle_static(req)
+	}
+	return s.handle_api(req)
 }
 
-// 停止服务器
-pub fn (mut s Server) stop() {
-	s.running = false
-	s.on_stop()
-}
-
-// 处理 API 请求
-fn handle_api_request(s &Server, mut ctx http.Context) {
-	method := ctx.req.method.str()
-	path := ctx.req.url
+fn (mut s Server) handle_api(req Request) Response {
+	method := req.method
+	path := req.url
 	
-	// 查找处理器
 	if method_handlers := s.router.routes[method] {
 		if handler := method_handlers[path] {
-			// 构建 Context
-			req_ctx := Context{
-				request: ctx.req
-				params: extract_params(path, ctx.req.url)
-				query: parse_query(ctx.req.url)
-				body: ctx.req.data
-				status: 200
+			mut req_ctx := Context{
+				request: req
+				params: extract_params(path, req.url)
+				query: parse_query(req.url)
+				body: req.data
+				status_code: 200
 				headers: map[string]string{}
-				data: map[string]any{}
+				data: map[string]string{}
 			}
 			
-			// 执行中间件
 			for mw in s.middleware {
-				if !mw(req_ctx) {
-					return
+				if !mw(mut req_ctx) {
+					return Response{
+						status_code: req_ctx.status_code
+						headers: req_ctx.headers.clone()
+						body: ''
+					}
 				}
 			}
 			
-			// 执行处理器
-			resp := handler(req_ctx)
-			
-			// 设置响应
-			ctx.resp.status_code = resp.status
-			for key, value in resp.headers {
-				ctx.resp.header.add_custom(key, value) or {}
-			}
-			ctx.resp.body = resp.body
-			return
+			return handler(req_ctx)
 		}
 	}
 	
-	// 404
-	resp := s.router.not_found(Context{
-		request: ctx.req
+	return s.router.not_found(Context{
+		request: req
 	})
-	ctx.resp.status_code = resp.status
-	ctx.resp.body = resp.body
 }
 
-// 处理静态文件请求
-fn handle_static_request(s &Server, mut ctx http.Context) {
-	mut path := ctx.req.url
+fn (mut s Server) handle_static(req Request) Response {
+	mut path := req.url
 	if path == '/' {
 		path = '/index.html'
 	}
@@ -228,24 +201,65 @@ fn handle_static_request(s &Server, mut ctx http.Context) {
 	
 	if os.exists(file_path) && os.is_file(file_path) {
 		content := os.read_file(file_path) or {
-			ctx.resp.status_code = 500
-			ctx.resp.body = 'Internal Server Error'
-			return
+			return Response{
+				status_code: 500
+				body: 'Internal Server Error'
+			}
 		}
 		
-		// 设置 Content-Type
 		content_type := get_content_type(file_path)
-		ctx.resp.header.add_custom('Content-Type', content_type) or {}
-		ctx.resp.body = content
+		mut headers := map[string]string{}
+		headers['Content-Type'] = content_type
+		
+		return Response{
+			status_code: 200
+			headers: headers
+			body: content
+		}
 	} else {
-		ctx.resp.status_code = 404
-		ctx.resp.body = 'Not Found'
+		return Response{
+			status_code: 404
+			body: 'Not Found'
+		}
 	}
+}
+
+// 启动服务器 - 简化版，使用 TCP listener
+pub fn (mut s Server) start() ! {
+	s.running = true
+	s.on_start()
+	
+	addr := '${s.host}:${s.port}'
+	println('Web server starting on http://${addr}')
+	
+	// 创建 TCP listener
+	mut listener := net.listen_tcp(.ip, '${s.host}:${s.port}', net.ListenOptions{})!
+	s.listener = listener
+	
+	// 在后台接受连接
+	spawn fn (mut srv Server) {
+		for srv.running {
+			mut conn := srv.listener.accept() or {
+				time.sleep(100 * time.millisecond)
+				continue
+			}
+			// 简化处理：直接返回简单响应
+			response := 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nVAI Web Server\n'
+			conn.write(response.bytes()) or {}
+			conn.close() or {}
+		}
+	}(mut s)
+}
+
+// 停止服务器
+pub fn (mut s Server) stop() {
+	s.running = false
+	s.on_stop()
+	s.listener.close() or {}
 }
 
 // 提取 URL 参数
 fn extract_params(route string, url string) map[string]string {
-	// 简化实现：解析路径参数
 	return map[string]string{}
 }
 
@@ -287,39 +301,33 @@ fn get_content_type(file_path string) string {
 }
 
 // JSON 响应辅助函数
-pub fn json_response(data any) Response {
+pub fn json_response(json_body string) Response {
 	return Response{
-		status: 200
+		status_code: 200
 		headers: {'Content-Type': 'application/json'}
-		body: json.encode(data)
+		body: json_body
 	}
 }
 
 // 成功响应
-pub fn success_response(data any) Response {
-	return json_response({
-		'success': true
-		'data': data
-	})
+pub fn success_response(data string) Response {
+	return json_response('{"success":true,"data":' + data + '}')
 }
 
 // 错误响应
 pub fn error_response(code int, message string) Response {
+	escaped := message.replace('"', '\\"')
 	return Response{
-		status: code
+		status_code: code
 		headers: {'Content-Type': 'application/json'}
-		body: json.encode({
-			'success': false
-			'error': message
-			'code': code
-		})
+		body: '{"success":false,"error":"' + escaped + '","code":' + code.str() + '}'
 	}
 }
 
 // HTML 响应
 pub fn html_response(html string) Response {
 	return Response{
-		status: 200
+		status_code: 200
 		headers: {'Content-Type': 'text/html; charset=utf-8'}
 		body: html
 	}
@@ -328,7 +336,7 @@ pub fn html_response(html string) Response {
 // 重定向响应
 pub fn redirect_response(url string) Response {
 	return Response{
-		status: 302
+		status_code: 302
 		headers: {'Location': url}
 		body: ''
 	}

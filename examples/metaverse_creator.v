@@ -6,7 +6,7 @@
 // - 世界(时空缝): 构建独特的时空体验和场景
 //
 // 使用 OpenRouter API 进行真实测试
-// API Key: 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
+// API Key: your_openrouter_api_key
 
 module main
 
@@ -316,7 +316,7 @@ pub fn (mut e MetaverseCreatorEngine) save_plan(plan MonetizationPlan) ! {
 
 	// 将方案各部分向量化存储
 	doc := Document{
-		id: 'plan_${time.now().unix}'
+		id: 'plan_${time.now().unix()}'
 		content: json.encode(plan)
 		metadata: {
 			'type': 'monetization_plan'

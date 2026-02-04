@@ -2,9 +2,7 @@
 module cli
 
 import time
-import os
 import term
-import runtime
 
 // Debugger 调试器
 pub struct Debugger {
@@ -65,7 +63,7 @@ pub fn (d &Debugger) check_breakpoint(location string) bool {
 
 // 记录日志
 pub fn (d &Debugger) log(level LogLevel, message string) {
-	if !d.enabled || level < d.log_level {
+	if !d.enabled || int(level) < int(d.log_level) {
 		return
 	}
 	
@@ -138,10 +136,18 @@ pub fn (mut p PerformanceProfiler) end(name string) {
 	}
 }
 
+// pad_right pads a string to the specified width
+fn pad_right(s string, width int) string {
+	if s.len >= width {
+		return s
+	}
+	return s + ' '.repeat(width - s.len)
+}
+
 // 获取报告
 pub fn (p &PerformanceProfiler) report() string {
 	mut output := '\n=== Performance Report ===\n\n'
-	output += 'Function'.ljust(30) + 'Calls'.ljust(10) + 'Total'.ljust(15) + 'Avg'.ljust(15) + 'Min'.ljust(15) + 'Max'.ljust(15) + '\n'
+	output += pad_right('Function', 30) + pad_right('Calls', 10) + pad_right('Total', 15) + pad_right('Avg', 15) + pad_right('Min', 15) + pad_right('Max', 15) + '\n'
 	output += '-'.repeat(100) + '\n'
 	
 	for _, profile in p.profiles {
@@ -151,12 +157,12 @@ pub fn (p &PerformanceProfiler) report() string {
 			time.Duration(0)
 		}
 		
-		output += profile.name.ljust(30)
-		output += profile.call_count.str().ljust(10)
-		output += profile.total_time.str().ljust(15)
-		output += avg.str().ljust(15)
-		output += profile.min_time.str().ljust(15)
-		output += profile.max_time.str().ljust(15)
+		output += pad_right(profile.name, 30)
+		output += pad_right(profile.call_count.str(), 10)
+		output += pad_right(profile.total_time.str(), 15)
+		output += pad_right(avg.str(), 15)
+		output += pad_right(profile.min_time.str(), 15)
+		output += pad_right(profile.max_time.str(), 15)
 		output += '\n'
 	}
 	
@@ -194,13 +200,12 @@ pub fn new_memory_monitor() MemoryMonitor {
 
 // 捕获快照
 pub fn (mut m MemoryMonitor) snapshot() {
-	// 简化实现：使用 GC 统计
-	stats := runtime.gc_stats()
-	
+	// 简化实现：runtime.gc_stats() 在 V 0.5 中不可用
+	// 使用模拟数据
 	snapshot := MemorySnapshot{
 		timestamp: time.now()
-		heap_used: stats.heap_used
-		heap_free: stats.heap_free
+		heap_used: 0
+		heap_free: 0
 		system_ram: 0  // 需要平台特定实现
 	}
 	

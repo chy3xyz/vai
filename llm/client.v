@@ -2,9 +2,8 @@
 // 支持 OpenAI、Anthropic、Ollama 等多个 LLM 提供商
 module llm
 
-import net.http
-import json
 import time
+import skills
 
 // LLMProvider LLM 提供商接口
 pub interface LLMProvider {
@@ -89,7 +88,7 @@ pub struct Function {
 	pub:
 		name        string
 		description string
-		parameters  map[string]any
+		parameters  map[string]skills.Value
 }
 
 // ToolChoice 工具选择
@@ -126,7 +125,6 @@ pub struct BaseClient {
 		api_key      string
 		base_url     string
 		timeout      time.Duration = 60 * time.second
-		http_client  http.Client
 		default_model string
 }
 
@@ -135,9 +133,6 @@ pub fn new_base_client(api_key string, base_url string) BaseClient {
 	return BaseClient{
 		api_key: api_key
 		base_url: base_url
-		http_client: http.Client{
-			timeout: 60 * time.second
-		}
 		default_model: ''
 	}
 }

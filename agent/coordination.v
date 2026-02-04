@@ -4,25 +4,27 @@ module agent
 
 import time
 import json
+import skills
+import protocol { new_event_message }
 
 // MapReduceJob Map-Reduce 作业
 pub struct MapReduceJob {
 	pub:
 		id          string
 		description string
-		input_data  []map[string]any  // 输入数据集
-		mapper      fn (map[string]any) map[string]any  // 映射函数
-		reducer     fn ([]map[string]any) map[string]any // 归约函数
+		input_data  []map[string]skills.Value  // 输入数据集
+		mapper      ?fn (map[string]skills.Value) map[string]skills.Value  // 映射函数
+		reducer     ?fn ([]map[string]skills.Value) map[string]skills.Value // 归约函数
 		num_workers int = 3
 }
 
 // MapReduceResult Map-Reduce 结果
 pub struct MapReduceResult {
 	pub:
-		job_id      string
-		mapped_results []map[string]any
-		final_result map[string]any
-		took_ms     i64
+		job_id         string
+		mapped_results []map[string]skills.Value
+		final_result   map[string]skills.Value
+		took_ms        i64
 }
 
 // 执行 Map-Reduce 作业
@@ -36,7 +38,7 @@ pub fn (mut h AgentHub) execute_mapreduce(job MapReduceJob) !MapReduceResult {
 	}
 	
 	// Map 阶段
-	mut mapped_results := []map[string]any{}
+	mut mapped_results := []map[string]skills.Value{}
 	mut map_tasks := []Task{}
 	
 	for i, data in job.input_data {
@@ -70,7 +72,7 @@ pub fn (mut h AgentHub) execute_mapreduce(job MapReduceJob) !MapReduceResult {
 		id: '${job.id}_reduce'
 		type_: 'reduce'
 		description: 'Reduce task for job ${job.id}'
-		input_data: {'mapped': mapped_results}
+		input_data: {'mapped': skills.Value(mapped_results)}
 		priority: 1
 	}
 	
@@ -86,7 +88,7 @@ pub fn (mut h AgentHub) execute_mapreduce(job MapReduceJob) !MapReduceResult {
 	return MapReduceResult{
 		job_id: job.id
 		mapped_results: mapped_results
-		final_result: map[string]any{}
+		final_result: map[string]skills.Value{}
 		took_ms: took.milliseconds()
 	}
 }
@@ -127,12 +129,12 @@ pub fn (mut h AgentHub) initiate_voting(proposal VotingProposal) !VotingResult {
 	mut votes := map[string]Vote{}
 	
 	// 向每个 Agent 发送投票请求
-	for agent_info in agents {
+	for ag_info in agents {
 		vote_request := new_event_message('vote_request', {
 			'proposal': json.encode(proposal)
 		})
 		
-		h.route_message('hub', agent_info.id, vote_request)!
+		h.route_message('hub', ag_info.id, vote_request)!
 	}
 	
 	// 等待投票结果
@@ -205,8 +207,8 @@ pub fn (mut h AgentHub) create_pipeline(name string, stages []PipelineStage) !Pi
 }
 
 // 执行管道处理
-pub fn (mut p Pipeline) process(data map[string]any) !map[string]any {
-	mut current_data := data
+pub fn (mut p Pipeline) process(data map[string]skills.Value) !map[string]skills.Value {
+	mut current_data := data.clone()
 	
 	for stage in p.stages {
 		// 创建处理任务
@@ -225,11 +227,11 @@ pub fn (mut p Pipeline) process(data map[string]any) !map[string]any {
 		time.sleep(500 * time.millisecond)
 		
 		// 获取结果
-		if result := p.hub.results[task.id] {
-			if result.success {
-				current_data = result.output
+		if res := p.hub.results[task.id] {
+			if res.success {
+				current_data = res.output.clone()
 			} else {
-				return error('pipeline stage ${stage.name} failed: ${result.error_msg}')
+				return error('pipeline stage ${stage.name} failed: ${res.error_msg}')
 			}
 		}
 	}
@@ -269,9 +271,9 @@ pub fn (mut cb ConsensusBuilder) reach_consensus(topic string, initial_proposal 
 				type_: 'feedback'
 				description: 'Provide feedback on: ${current_proposal}'
 				input_data: {
-					'proposal': current_proposal
-					'topic': topic
-					'round': round
+					'proposal': skills.Value(current_proposal)
+					'topic': skills.Value(topic)
+					'round': skills.Value(i64(round))
 				}
 				assigned_to: participant_id
 			}
@@ -308,7 +310,7 @@ pub enum LoadBalanceStrategy {
 }
 
 // 选择 Agent
-pub fn (lb &LoadBalancer) select_agent(task Task) ?&BaseAgent {
+pub fn (mut lb LoadBalancer) select_agent(task Task) ?&BaseAgent {
 	match lb.strategy {
 		.round_robin {
 			workers := lb.hub.get_agents_by_role(.worker)
@@ -321,12 +323,12 @@ pub fn (lb &LoadBalancer) select_agent(task Task) ?&BaseAgent {
 			mut min_load := 999999
 			mut selected := ?&BaseAgent(none)
 			
-			for _, agent in lb.hub.agents {
+			for _, ag_info in lb.hub.agents {
 				// 简化：使用状态作为负载指标
-				load := if agent.agent_status == .busy { 1 } else { 0 }
+				load := if ag_info.agent_status == .busy { 1 } else { 0 }
 				if load < min_load {
 					min_load = load
-					selected = agent
+					selected = unsafe { ag_info }
 				}
 			}
 			return selected
@@ -336,11 +338,11 @@ pub fn (lb &LoadBalancer) select_agent(task Task) ?&BaseAgent {
 			mut best_score := -1
 			mut selected := ?&BaseAgent(none)
 			
-			for _, agent in lb.hub.agents {
-				score := lb.calculate_capability_score(agent, task)
+			for _, mut ag_info in lb.hub.agents {
+				score := lb.calculate_capability_score(mut ag_info, task)
 				if score > best_score {
 					best_score = score
-					selected = agent
+					selected = unsafe { ag_info }
 				}
 			}
 			return selected
@@ -352,9 +354,10 @@ pub fn (lb &LoadBalancer) select_agent(task Task) ?&BaseAgent {
 }
 
 // 计算能力匹配分数
-fn (lb &LoadBalancer) calculate_capability_score(agent &BaseAgent, task Task) int {
+fn (mut lb LoadBalancer) calculate_capability_score(mut ag BaseAgent, task Task) int {
 	mut score := 0
-	caps := agent.capabilities()
+	caps := ag.capabilities()
+	_ := caps
 	
 	for req_cap in task.required_caps {
 		if req_cap in caps {

@@ -3,7 +3,6 @@ module llm
 
 import net.http
 import json
-import time
 
 // OpenAIClient OpenAI 客户端
 pub struct OpenAIClient {
@@ -100,19 +99,21 @@ pub struct OpenAIModel {
 }
 
 // 创建 OpenAI 客户端
-pub fn new_openai_client(api_key string) OpenAIClient {
-	return OpenAIClient{
+pub fn new_openai_client(api_key string) &OpenAIClient {
+	mut client := &OpenAIClient{
 		BaseClient: new_base_client(api_key, 'https://api.openai.com/v1')
-		default_model: 'gpt-4o-mini'
 	}
+	client.default_model = 'gpt-4o-mini'
+	return client
 }
 
 // 创建自定义 OpenAI 客户端（用于兼容 API）
-pub fn new_openai_compatible_client(api_key string, base_url string, default_model string) OpenAIClient {
-	return OpenAIClient{
+pub fn new_openai_compatible_client(api_key string, base_url string, default_model string) &OpenAIClient {
+	mut client := &OpenAIClient{
 		BaseClient: new_base_client(api_key, base_url)
-		default_model: default_model
 	}
+	client.default_model = default_model
+	return client
 }
 
 // 获取提供商名称
@@ -121,7 +122,7 @@ pub fn (c &OpenAIClient) name() string {
 }
 
 // 发送补全请求
-pub fn (mut c OpenAIClient) complete(request CompletionRequest) !CompletionResponse {
+pub fn (c &OpenAIClient) complete(request CompletionRequest) !CompletionResponse {
 	model := if request.model.len > 0 { request.model } else { c.default_model }
 	
 	mut messages := request.messages.clone()
@@ -129,7 +130,9 @@ pub fn (mut c OpenAIClient) complete(request CompletionRequest) !CompletionRespo
 	// 添加系统提示词
 	if system := request.system {
 		if messages.len == 0 || messages[0].role != 'system' {
-			messages = [system_message(system), ...messages]
+			mut new_msgs := [system_message(system)]
+			new_msgs << messages
+			messages = new_msgs.clone()
 		}
 	}
 	
@@ -146,11 +149,17 @@ pub fn (mut c OpenAIClient) complete(request CompletionRequest) !CompletionRespo
 	
 	json_body := json.encode(openai_req)
 	
-	mut http_req := http.new_request(.post, '${c.base_url}/chat/completions', json_body)
-	http_req.header.add(.content_type, 'application/json')
-	http_req.header.add(.authorization, 'Bearer ${c.api_key}')
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.content_type, 'application/json')
+	header.add(.authorization, 'Bearer ${c.api_key}')
 	
-	resp := c.http_client.do(http_req)!
+	resp := http.fetch(
+		url: '${c.base_url}/chat/completions'
+		method: .post
+		header: header
+		data: json_body
+	)!
 	
 	if resp.status_code != 200 {
 		return error('OpenAI API error: ${resp.status_code} - ${resp.body}')
@@ -176,14 +185,16 @@ pub fn (mut c OpenAIClient) complete(request CompletionRequest) !CompletionRespo
 }
 
 // 发送流式补全请求
-pub fn (mut c OpenAIClient) complete_stream(request CompletionRequest, callback fn (chunk CompletionChunk)) ! {
+pub fn (c &OpenAIClient) complete_stream(request CompletionRequest, callback fn (chunk CompletionChunk)) ! {
 	model := if request.model.len > 0 { request.model } else { c.default_model }
 	
 	mut messages := request.messages.clone()
 	
 	if system := request.system {
 		if messages.len == 0 || messages[0].role != 'system' {
-			messages = [system_message(system), ...messages]
+			mut new_msgs := [system_message(system)]
+			new_msgs << messages
+			messages = new_msgs.clone()
 		}
 	}
 	
@@ -199,13 +210,17 @@ pub fn (mut c OpenAIClient) complete_stream(request CompletionRequest, callback 
 	
 	json_body := json.encode(openai_req)
 	
-	mut http_req := http.new_request(.post, '${c.base_url}/chat/completions', json_body)
-	http_req.header.add(.content_type, 'application/json')
-	http_req.header.add(.authorization, 'Bearer ${c.api_key}')
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.content_type, 'application/json')
+	header.add(.authorization, 'Bearer ${c.api_key}')
 	
-	// 流式请求处理简化版
-	// 实际应该使用 SSE 解析
-	resp := c.http_client.do(http_req)!
+	resp := http.fetch(
+		url: '${c.base_url}/chat/completions'
+		method: .post
+		header: header
+		data: json_body
+	)!
 	
 	if resp.status_code != 200 {
 		return error('OpenAI API error: ${resp.status_code}')
@@ -237,11 +252,16 @@ pub fn (mut c OpenAIClient) complete_stream(request CompletionRequest, callback 
 }
 
 // 获取可用模型列表
-pub fn (mut c OpenAIClient) list_models() ![]ModelInfo {
-	mut req := http.new_request(.get, '${c.base_url}/models', '')
-	req.header.add(.authorization, 'Bearer ${c.api_key}')
+pub fn (c &OpenAIClient) list_models() ![]ModelInfo {
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.authorization, 'Bearer ${c.api_key}')
 	
-	resp := c.http_client.do(req)!
+	resp := http.fetch(
+		url: '${c.base_url}/models'
+		method: .get
+		header: header
+	)!
 	
 	if resp.status_code != 200 {
 		return error('failed to list models: ${resp.status_code}')

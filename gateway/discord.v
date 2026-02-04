@@ -8,6 +8,8 @@ import net.websocket
 import json
 import time
 
+
+
 // DiscordAdapter Discord 适配器
 pub struct DiscordAdapter {
 	BaseAdapter
@@ -61,7 +63,7 @@ pub struct DiscordMessage {
 		content     string @[json: 'content']
 		timestamp   string @[json: 'timestamp']
 		type_       int    @[json: 'type']
-		referenced_message ?DiscordMessage @[json: 'referenced_message'; omitempty]
+		referenced_message ?&DiscordMessage @[json: 'referenced_message'; omitempty]
 }
 
 // DiscordSendMessageRequest 发送消息请求
@@ -75,7 +77,7 @@ pub struct DiscordSendMessageRequest {
 pub struct DiscordGatewayPayload {
 	pub:
 		op          int    @[json: 'op']
-		d           json.Any @[json: 'd']
+		d           string @[json: 'd']
 		s           ?int   @[json: 's'; omitempty]
 		t           ?string @[json: 't'; omitempty]
 }
@@ -125,8 +127,8 @@ pub const (
 )
 
 // 创建 Discord 适配器
-pub fn new_discord_adapter(bot_token string) DiscordAdapter {
-	return DiscordAdapter{
+pub fn new_discord_adapter(bot_token string) &DiscordAdapter {
+	return &DiscordAdapter{
 		BaseAdapter: new_base_adapter('discord', AdapterConfig{
 			api_key: bot_token
 			timeout_ms: 30000
@@ -154,7 +156,7 @@ pub fn (mut a DiscordAdapter) connect() ! {
 	mut ws := websocket.new_client(gateway_url)!
 
 	// 设置消息处理器
-	ws.on_message_ref(fn [mut a] (mut ws websocket.Client, msg &websocket.Message) ! {
+	ws.on_message(fn [mut a] (mut ws websocket.Client, msg &websocket.Message) ! {
 		a.handle_gateway_message(msg)!
 	})
 
@@ -210,7 +212,7 @@ pub fn (mut a DiscordAdapter) send_message(msg Message) ! {
 	req.header.add(.content_type, 'application/json')
 	req.header.add(.authorization, 'Bot ${a.bot_token}')
 
-	resp := http.fetch(req)!
+	resp := http.fetch(url: req.url, method: req.method, header: req.header, data: req.data)!
 
 	if resp.status_code != 200 && resp.status_code != 201 {
 		return error('failed to send message: ${resp.status_code} - ${resp.body}')
@@ -235,7 +237,7 @@ pub fn (mut a DiscordAdapter) get_user_info(user_id string) !UserInfo {
 	mut req := http.new_request(.get, '${a.api_base}/users/${user_id}', '')
 	req.header.add(.authorization, 'Bot ${a.bot_token}')
 
-	resp := http.fetch(req)!
+	resp := http.fetch(url: req.url, method: req.method, header: req.header, data: req.data)!
 
 	if resp.status_code != 200 {
 		return error('failed to get user info: ${resp.status_code}')
@@ -257,7 +259,7 @@ fn (mut a DiscordAdapter) load_bot_info() ! {
 	mut req := http.new_request(.get, '${a.api_base}/users/@me', '')
 	req.header.add(.authorization, 'Bot ${a.bot_token}')
 
-	resp := http.fetch(req)!
+	resp := http.fetch(url: req.url, method: req.method, header: req.header, data: req.data)!
 
 	if resp.status_code != 200 {
 		return error('failed to load bot info: ${resp.status_code}')
@@ -272,14 +274,14 @@ fn (mut a DiscordAdapter) get_gateway_url() !string {
 	mut req := http.new_request(.get, '${a.api_base}/gateway/bot', '')
 	req.header.add(.authorization, 'Bot ${a.bot_token}')
 
-	resp := http.fetch(req)!
+	resp := http.fetch(url: req.url, method: req.method, header: req.header, data: req.data)!
 
 	if resp.status_code != 200 {
 		return error('failed to get gateway: ${resp.status_code}')
 	}
 
 	// 解析响应
-	gateway_resp := json.decode(map[string]json.Any, resp.body)!
+	gateway_resp := json.decode(map[string]string, resp.body)!
 
 	if url := gateway_resp['url'] {
 		return url.str()
@@ -323,11 +325,11 @@ fn (mut a DiscordAdapter) handle_gateway_message(msg &websocket.Message) ! {
 }
 
 // 处理分发事件
-fn (mut a DiscordAdapter) handle_dispatch(event_type string, data json.Any) ! {
+fn (mut a DiscordAdapter) handle_dispatch(event_type string, data string) ! {
 	match event_type {
 		'READY' {
 			// 连接成功
-			ready_data := json.decode(map[string]json.Any, data.str())!
+			ready_data := json.decode(map[string]string, data)!
 			if session_id := ready_data['session_id'] {
 				a.session_id = session_id.str()
 			}
@@ -368,7 +370,7 @@ fn (mut a DiscordAdapter) send_identify() ! {
 
 	payload := DiscordGatewayPayload{
 		op: int(DiscordEvent.identify)
-		d: json.Any(json.encode(identify))
+		d: json.encode(identify)
 	}
 
 	if mut ws := a.ws_client {
@@ -429,11 +431,11 @@ fn (mut a DiscordAdapter) on_message(msg Message) {
 }
 
 // 获取频道列表
-pub fn (mut a DiscordAdapter) list_channels(guild_id string) ![]DiscordChannel {
+pub fn (a &DiscordAdapter) list_channels(guild_id string) ![]DiscordChannel {
 	mut req := http.new_request(.get, '${a.api_base}/guilds/${guild_id}/channels', '')
 	req.header.add(.authorization, 'Bot ${a.bot_token}')
 
-	resp := http.fetch(req)!
+	resp := http.fetch(url: req.url, method: req.method, header: req.header, data: req.data)!
 
 	if resp.status_code != 200 {
 		return error('failed to list channels: ${resp.status_code}')
@@ -444,17 +446,17 @@ pub fn (mut a DiscordAdapter) list_channels(guild_id string) ![]DiscordChannel {
 }
 
 // 加入频道（需要权限）
-pub fn (mut a DiscordAdapter) join_channel(channel_id string) ! {
+pub fn (a &DiscordAdapter) join_channel(channel_id string) ! {
 	// Discord 通过邀请链接加入，这里简化处理
 	println('Use Discord invite links to join channels')
 }
 
 // 离开频道
-pub fn (mut a DiscordAdapter) leave_channel(channel_id string) ! {
+pub fn (a &DiscordAdapter) leave_channel(channel_id string) ! {
 	mut req := http.new_request(.delete, '${a.api_base}/users/@me/channels/${channel_id}', '')
 	req.header.add(.authorization, 'Bot ${a.bot_token}')
 
-	resp := http.fetch(req)!
+	resp := http.fetch(url: req.url, method: req.method, header: req.header, data: req.data)!
 
 	if resp.status_code != 200 && resp.status_code != 204 {
 		return error('failed to leave channel: ${resp.status_code}')

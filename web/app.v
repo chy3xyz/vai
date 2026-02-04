@@ -19,7 +19,7 @@ pub struct WebConfig {
 		port          int = 8080
 		static_dir    string = 'static'
 		api_key       string
-		auth_enabled  bool = false
+		auth_enabled  bool
 }
 
 // 创建 Web 应用
@@ -44,7 +44,8 @@ pub fn (mut app WebApp) setup_routes() {
 	}
 	
 	// 注册 API 路由
-	register_api_routes(mut app.server.router, api_config)
+	mut api_config_mut := api_config
+	register_api_routes(mut app.server.router, mut api_config_mut)
 	
 	// 添加中间件
 	app.server.use(cors_middleware(['*']))

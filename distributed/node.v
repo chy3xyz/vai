@@ -86,7 +86,7 @@ pub fn new_node(config ClusterConfig) Node {
 
 // 生成节点 ID
 fn generate_node_id() string {
-	return 'node_${time.now().unix}_${rand.string(8)}'
+	return 'node_${time.now().unix()}_${rand.string(8)}'
 }
 
 // 启动节点

@@ -5,7 +5,6 @@ module gateway
 import protocol { Message, MessageType, MessageRole, new_text_message, TextContent }
 import net.websocket
 import net.http
-import json
 import time
 
 // WhatsAppAdapter WhatsApp 适配器
@@ -28,7 +27,7 @@ pub struct WhatsAppMessage {
 	msg_type     string
 	is_group     bool
 	group_id     ?string
-	quoted_msg   ?WhatsAppMessage
+	quoted_msg   ?&WhatsAppMessage
 }
 
 // WhatsAppCommand WhatsApp 命令
@@ -41,8 +40,8 @@ pub enum WhatsAppCommand {
 }
 
 // 创建 WhatsApp 适配器
-pub fn new_whatsapp_adapter(session_id string) WhatsAppAdapter {
-	return WhatsAppAdapter{
+pub fn new_whatsapp_adapter(session_id string) &WhatsAppAdapter {
+	return &WhatsAppAdapter{
 		BaseAdapter: new_base_adapter('whatsapp', AdapterConfig{
 			timeout_ms: 30000
 			retry_count: 3
@@ -78,7 +77,7 @@ pub fn (mut a WhatsAppAdapter) disconnect() ! {
 	a.is_logged_in = false
 	
 	if mut ws_client := a.ws_client {
-		ws_client.close()!
+		ws_client.close(1000, 'Normal closure')!
 	}
 }
 
@@ -151,12 +150,12 @@ pub struct WhatsAppBusinessAdapter {
 		api_version  string
 		phone_number_id string
 		access_token string
-		http_client  http.Client
+		// http_client removed - V 0.5 uses http.fetch
 }
 
 // 创建 WhatsApp Business API 适配器
-pub fn new_whatsapp_business_adapter(phone_number_id string, access_token string) WhatsAppBusinessAdapter {
-	return WhatsAppBusinessAdapter{
+pub fn new_whatsapp_business_adapter(phone_number_id string, access_token string) &WhatsAppBusinessAdapter {
+	return &WhatsAppBusinessAdapter{
 		BaseAdapter: new_base_adapter('whatsapp_business', AdapterConfig{
 			timeout_ms: 30000
 			retry_count: 3
@@ -164,9 +163,7 @@ pub fn new_whatsapp_business_adapter(phone_number_id string, access_token string
 		api_version: 'v18.0'
 		phone_number_id: phone_number_id
 		access_token: access_token
-		http_client: http.Client{
-			timeout: 30 * time.second
-		}
+
 	}
 }
 
@@ -174,7 +171,8 @@ pub fn new_whatsapp_business_adapter(phone_number_id string, access_token string
 pub fn (mut a WhatsAppBusinessAdapter) connect() ! {
 	url := 'https://graph.facebook.com/${a.api_version}/${a.phone_number_id}?access_token=${a.access_token}'
 	
-	resp := a.http_client.get(url)!
+	mut http_req := http.new_request(.get, url, '')
+	resp := http.fetch(url: http_req.url, method: .get, header: http_req.header)!
 	
 	if resp.status_code != 200 {
 		return error('failed to connect to WhatsApp Business API: ${resp.body}')
@@ -197,18 +195,14 @@ pub fn (mut a WhatsAppBusinessAdapter) send_message(msg Message) ! {
 	
 	url := 'https://graph.facebook.com/${a.api_version}/${a.phone_number_id}/messages'
 	
-	mut payload := map[string]any{}
-	payload['messaging_product'] = 'whatsapp'
-	payload['recipient_type'] = 'individual'
-	payload['to'] = msg.receiver_id
+	// Build JSON payload manually for V 0.5
+	mut payload_text := '{"messaging_product":"whatsapp","recipient_type":"individual","to":"${msg.receiver_id}"'
 	
 	match msg.msg_type {
 		.text {
-			if content := msg.content as TextContent {
-				payload['type'] = 'text'
-				payload['text'] = {
-					'body': content.text
-				}
+			if msg.content is protocol.TextContent {
+				content := msg.content as protocol.TextContent
+				payload_text += ',"type":"text","text":{"body":"${content.text}"}'
 			}
 		}
 		else {
@@ -216,13 +210,14 @@ pub fn (mut a WhatsAppBusinessAdapter) send_message(msg Message) ! {
 		}
 	}
 	
-	json_payload := json.encode(payload)
+	payload_text += '}'
+	json_payload := payload_text
 	
 	mut req := http.new_request(.post, url, json_payload)
 	req.header.add(.content_type, 'application/json')
 	req.header.add(.authorization, 'Bearer ${a.access_token}')
 	
-	resp := a.http_client.do(req)!
+	resp := http.fetch(url: req.url, method: .post, header: req.header, data: req.data)!
 	
 	if resp.status_code != 200 {
 		return error('failed to send message: ${resp.body}')

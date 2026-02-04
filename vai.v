@@ -2,7 +2,7 @@
 // AI 基础设施工具主模块
 module main
 
-import runtime { Scheduler, new_scheduler }
+import scheduler { Scheduler, new_scheduler }
 import protocol { Message, Conversation, new_text_message }
 import gateway {
 	GatewayManager, new_gateway_manager,
@@ -14,9 +14,9 @@ import llm {
 	new_openai_client, new_ollama_client, new_openrouter_client,
 	user_message, system_message, CompletionRequest
 }
-import skills { Registry, new_registry, register_builtin_skills }
+import skills { Registry, new_registry, register_builtin_skills, Value, SkillContext }
 import memory { MemoryStore, new_memory_store, new_ollama_embedder, new_simple_index }
-import planner { ReActPlanner, new_react_planner }
+import planner as _
 import sandbox { SandboxManager, new_sandbox_manager }
 import cli { new_cli, register_default_commands, StatusInfo }
 import agent { AgentHub, new_hub, BaseAgent, new_base_agent, AgentRole }
@@ -24,6 +24,7 @@ import web { new_web_app, WebConfig }
 import utils
 import os
 import time
+import json
 
 // VAIAgent 主 Agent 结构体
 pub struct VAIAgent {
@@ -83,138 +84,137 @@ pub fn new_agent(config AgentConfig) &VAIAgent {
 }
 
 // 初始化 Agent
-pub fn (mut agent VAIAgent) init() ! {
-	println(term_cyan('Initializing VAI Agent v${agent.version}...'))
+pub fn (mut vai_agent VAIAgent) init() ! {
+	println(term_cyan('Initializing VAI Agent v${vai_agent.version}...'))
 
 	// 启动调度器
-	agent.scheduler.start()!
+	vai_agent.scheduler.start()!
 	println(term_green('✓ Scheduler started'))
 
 	// 注册 LLM 提供商
-	if agent.config.openai_api_key.len > 0 {
-		mut openai := new_openai_client(agent.config.openai_api_key)
-		agent.llm_mgr.register('openai', openai)
+	if vai_agent.config.openai_api_key.len > 0 {
+		mut openai := new_openai_client(vai_agent.config.openai_api_key)
+		vai_agent.llm_mgr.register('openai', openai)
 		println(term_green('✓ Registered OpenAI provider'))
 	}
 
 	// 注册 OpenRouter
-	if agent.config.openrouter_api_key.len > 0 {
-		mut openrouter := new_openrouter_client(agent.config.openrouter_api_key)
-		agent.llm_mgr.register('openrouter', openrouter)
+	if vai_agent.config.openrouter_api_key.len > 0 {
+		mut openrouter := new_openrouter_client(vai_agent.config.openrouter_api_key)
+		vai_agent.llm_mgr.register('openrouter', openrouter)
 		println(term_green('✓ Registered OpenRouter provider'))
 	}
 
 	// 尝试连接本地 Ollama
 	mut ollama := new_ollama_client()
-	agent.llm_mgr.register('ollama', ollama)
+	vai_agent.llm_mgr.register('ollama', ollama)
 	println(term_green('✓ Registered Ollama provider (local)'))
 
 	// 注册网关适配器
-	if agent.config.telegram_bot_token.len > 0 {
-		mut telegram := new_telegram_adapter(agent.config.telegram_bot_token)
-		agent.gateway_mgr.register(telegram)
+	if vai_agent.config.telegram_bot_token.len > 0 {
+		mut telegram := new_telegram_adapter(vai_agent.config.telegram_bot_token)
+		vai_agent.gateway_mgr.register(telegram)
 		println(term_green('✓ Registered Telegram adapter'))
 	}
 
-	if agent.config.whatsapp_session_id.len > 0 {
-		mut whatsapp := new_whatsapp_adapter(agent.config.whatsapp_session_id)
-		agent.gateway_mgr.register(whatsapp)
+	if vai_agent.config.whatsapp_session_id.len > 0 {
+		mut whatsapp := new_whatsapp_adapter(vai_agent.config.whatsapp_session_id)
+		vai_agent.gateway_mgr.register(whatsapp)
 		println(term_green('✓ Registered WhatsApp adapter'))
 	}
 
-	if agent.config.whatsapp_phone_id.len > 0 && agent.config.whatsapp_token.len > 0 {
+	if vai_agent.config.whatsapp_phone_id.len > 0 && vai_agent.config.whatsapp_token.len > 0 {
 		mut whatsapp_business := new_whatsapp_business_adapter(
-			agent.config.whatsapp_phone_id,
-			agent.config.whatsapp_token
+			vai_agent.config.whatsapp_phone_id,
+			vai_agent.config.whatsapp_token
 		)
-		agent.gateway_mgr.register(whatsapp_business)
+		vai_agent.gateway_mgr.register(whatsapp_business)
 		println(term_green('✓ Registered WhatsApp Business adapter'))
 	}
 
-	if agent.config.discord_bot_token.len > 0 {
-		mut discord := new_discord_adapter(agent.config.discord_bot_token)
-		agent.gateway_mgr.register(discord)
+	if vai_agent.config.discord_bot_token.len > 0 {
+		mut discord := new_discord_adapter(vai_agent.config.discord_bot_token)
+		vai_agent.gateway_mgr.register(discord)
 		println(term_green('✓ Registered Discord adapter'))
 	}
 
-	if agent.config.debox_app_id.len > 0 && agent.config.debox_app_secret.len > 0 {
-		mut debox := new_debox_adapter(agent.config.debox_app_id, agent.config.debox_app_secret)
-		agent.gateway_mgr.register(debox)
+	if vai_agent.config.debox_app_id.len > 0 && vai_agent.config.debox_app_secret.len > 0 {
+		mut debox := new_debox_adapter(vai_agent.config.debox_app_id, vai_agent.config.debox_app_secret)
+		vai_agent.gateway_mgr.register(debox)
 		println(term_green('✓ Registered DeBox adapter'))
 	}
 
 	// 注册内置技能
-	register_builtin_skills(mut agent.skills_registry)!
-	println(term_green('✓ Registered ${agent.skills_registry.list().len} builtin skills'))
+	register_builtin_skills(mut vai_agent.skills_registry)!
+	println(term_green('✓ Registered ${vai_agent.skills_registry.list().len} builtin skills'))
 
 	println(term_cyan('\\nVAI Agent initialized successfully!'))
 }
 
 // 启动 Agent
-pub fn (mut agent VAIAgent) start() ! {
-	if agent.running {
+pub fn (mut vai_agent VAIAgent) start() ! {
+	if vai_agent.running {
 		return error('agent already running')
 	}
 
-	agent.running = true
-	agent.start_time = time.now()
+	vai_agent.running = true
+	vai_agent.start_time = time.now()
 
 	// 启动所有网关适配器
-	agent.gateway_mgr.start_all()!
+	vai_agent.gateway_mgr.start_all()!
 
 	println(term_green('\\nVAI Agent is running!'))
 	println('Press Ctrl+C to stop.\\n')
 
 	// 主事件循环
-	for agent.running {
+	inbound_ch := vai_agent.gateway_mgr.inbound_channel()
+	for vai_agent.running {
 		select {
-			msg := <-agent.gateway_mgr.inbound_channel() {
-				agent.handle_message(msg)
+			msg := <-inbound_ch {
+				vai_agent.handle_message(msg)
 			}
-			100 * time.millisecond {
+			else {
 				// 超时继续，检查 running 状态
+				// Use sleep to prevent busy loop
+				time.sleep(100 * time.millisecond)
 			}
 		}
 	}
 }
 
 // 停止 Agent
-pub fn (mut agent VAIAgent) stop() {
-	agent.running = false
-	agent.gateway_mgr.stop_all() or { eprintln('Error stopping gateways: ${err}') }
-	agent.scheduler.stop()
-	agent.sandbox_mgr.cleanup_all()
+pub fn (mut vai_agent VAIAgent) stop() {
+	vai_agent.running = false
+	vai_agent.gateway_mgr.stop_all() or { eprintln('Error stopping gateways: ${err}') }
+	vai_agent.scheduler.stop()
+	vai_agent.sandbox_mgr.cleanup_all()
 	println(term_cyan('\\nVAI Agent stopped.'))
 }
 
 // 处理消息
-fn (mut agent VAIAgent) handle_message(msg Message) {
-	agent.messages_processed++
+fn (mut vai_agent VAIAgent) handle_message(msg Message) {
+	vai_agent.messages_processed++
 
-	agent.scheduler.submit(
-		exec: fn [mut agent, msg] () ! {
-			agent.process_message(msg)!
-		}
-		priority: 0
-	) or {
-		eprintln('Failed to submit message task: ${err}')
+	// Process directly for now - closure capture would need redesign
+	vai_agent.process_message(msg) or {
+		eprintln('Failed to process message: ${err}')
 	}
 }
 
 // 处理单条消息
-fn (mut agent VAIAgent) process_message(msg Message) ! {
+fn (mut vai_agent VAIAgent) process_message(msg Message) ! {
 	println('[${term_yellow(msg.platform)}] ${term_bold(msg.sender_id)}: ${msg.text() or { '' }}')
 
 	// 获取或创建会话
 	conversation_id := '${msg.platform}_${msg.sender_id}'
-	if conversation_id !in agent.conversations {
-		agent.conversations[conversation_id] = protocol.new_conversation(conversation_id)
-		agent.memory_store.create_conversation(conversation_id) or {}
+	if conversation_id !in vai_agent.conversations {
+		vai_agent.conversations[conversation_id] = protocol.new_conversation(conversation_id)
+		vai_agent.memory_store.create_conversation(conversation_id) or {}
 	}
 
-	mut conversation := agent.conversations[conversation_id]
+	mut conversation := vai_agent.conversations[conversation_id]
 	conversation.add_message(msg)
-	agent.memory_store.add_message(conversation_id, msg) or {}
+	vai_agent.memory_store.add_message(conversation_id, msg) or {}
 
 	// 获取文本内容
 	text := msg.text() or { '' }
@@ -224,32 +224,32 @@ fn (mut agent VAIAgent) process_message(msg Message) ! {
 
 	// 检查是否是命令
 	if text.starts_with('/') {
-		agent.handle_command(msg, conversation_id)!
+		vai_agent.handle_command(msg, conversation_id)!
 		return
 	}
 
 	// 调用 LLM 生成回复
-	llm_response := agent.chat_with_llm(conversation) or {
+	llm_response := vai_agent.chat_with_llm(conversation) or {
 		eprintln('LLM error: ${err}')
 		return
 	}
 
 	// 创建回复消息
-	reply := new_text_message(llm_response)
+	mut reply := new_text_message(llm_response)
 	reply.receiver_id = msg.sender_id
 	reply.platform = msg.platform
 
 	// 添加 AI 回复到会话
-	agent.memory_store.add_message(conversation_id, reply) or {}
+	vai_agent.memory_store.add_message(conversation_id, reply) or {}
 
 	// 发送回复
-	agent.gateway_mgr.send_to_platform(msg.platform, reply) or {
+	vai_agent.gateway_mgr.send_to_platform(msg.platform, reply) or {
 		eprintln('Failed to send reply: ${err}')
 	}
 }
 
 // 处理命令
-fn (mut agent VAIAgent) handle_command(msg Message, conversation_id string) ! {
+fn (mut vai_agent VAIAgent) handle_command(msg Message, conversation_id string) ! {
 	text := msg.text() or { return }
 	parts := text[1..].split(' ')
 	if parts.len == 0 {
@@ -266,31 +266,31 @@ fn (mut agent VAIAgent) handle_command(msg Message, conversation_id string) ! {
 	match cmd {
 		'skills', 'tools' {
 			mut content := '**Available Skills:**\\n'
-			for skill in agent.skills_registry.list() {
+			for skill in vai_agent.skills_registry.list() {
 				content += '\\n• ${skill.name()}: ${skill.description()}'
 			}
 			reply.content = protocol.TextContent{ text: content, format: 'markdown' }
 		}
 		'models' {
 			mut content := '**Available Models:**\\n'
-			models := agent.llm_mgr.list_all_models() or { [] }
+			models := vai_agent.llm_mgr.list_all_models() or { [] }
 			for model in models[..min(models.len, 10)] {
 				content += '\\n• ${model.name} (${model.provider})'
 			}
 			reply.content = protocol.TextContent{ text: content, format: 'markdown' }
 		}
 		'status' {
-			uptime := time.since(agent.start_time)
+			uptime := time.since(vai_agent.start_time)
 			content := '**Status:**\\n' +
 				'Uptime: ${uptime}\\n' +
-				'Messages processed: ${agent.messages_processed}\\n' +
-				'Active conversations: ${agent.conversations.len}'
+				'Messages processed: ${vai_agent.messages_processed}\\n' +
+				'Active conversations: ${vai_agent.conversations.len}'
 			reply.content = protocol.TextContent{ text: content, format: 'markdown' }
 		}
 		'memory' {
 			// 搜索相关记忆
 			query := args.join(' ')
-			results := agent.memory_store.search_messages(conversation_id, query, 5)
+			results := vai_agent.memory_store.search_messages(conversation_id, query, 5)
 			mut content := '**Related memories:**\\n'
 			for result in results {
 				if result_text := result.text() {
@@ -315,13 +315,13 @@ fn (mut agent VAIAgent) handle_command(msg Message, conversation_id string) ! {
 		}
 	}
 
-	agent.gateway_mgr.send_to_platform(msg.platform, reply)!
+	vai_agent.gateway_mgr.send_to_platform(msg.platform, reply)!
 }
 
 // 与 LLM 对话
-fn (mut agent VAIAgent) chat_with_llm(conversation Conversation) !string {
+fn (mut vai_agent VAIAgent) chat_with_llm(conversation Conversation) !string {
 	// 构建消息历史
-	mut messages := [system_message(agent.config.system_prompt)]
+	mut messages := [system_message(vai_agent.config.system_prompt)]
 
 	for msg in conversation.last_messages(10) {
 		if content := msg.text() {
@@ -337,19 +337,15 @@ fn (mut agent VAIAgent) chat_with_llm(conversation Conversation) !string {
 		}
 	}
 
-	// 检查是否需要使用工具
-	skills := agent.skills_registry.to_openai_tools()
-
 	// 发送请求
 	request := CompletionRequest{
-		model: agent.config.default_model
+		model: vai_agent.config.default_model
 		messages: messages
 		temperature: 0.7
 		max_tokens: 2000
-		tools: skills
 	}
 
-	provider := agent.llm_mgr.get_default_provider() or {
+	provider := vai_agent.llm_mgr.get_default_provider() or {
 		return error('no LLM provider available')
 	}
 
@@ -357,21 +353,18 @@ fn (mut agent VAIAgent) chat_with_llm(conversation Conversation) !string {
 
 	// 处理工具调用
 	if tool_calls := response.tool_calls {
-		// 使用 ReAct 规划器处理工具调用
-		mut planner := new_react_planner(provider)
-
 		// 简化处理：直接执行第一个工具调用
 		if tool_calls.len > 0 {
 			tool_call := tool_calls[0]
-			args := json.decode(map[string]any, tool_call.function.arguments) or { map[string]any{} }
+			args := json.decode(map[string]Value, tool_call.function.arguments) or { map[string]Value{} }
 
 			skill_ctx := skills.SkillContext{
 				session_id: conversation.id
 				user_id: 'user'
-				working_dir: agent.config.working_dir
+				working_dir: vai_agent.config.working_dir
 			}
 
-			result := agent.skills_registry.execute(tool_call.function.name, args, skill_ctx) or {
+			result := vai_agent.skills_registry.execute(tool_call.function.name, args, skill_ctx) or {
 				return 'Error executing tool: ${err}'
 			}
 
@@ -383,13 +376,13 @@ fn (mut agent VAIAgent) chat_with_llm(conversation Conversation) !string {
 }
 
 // 命令行交互模式
-fn (mut agent VAIAgent) interactive_mode() ! {
+fn (mut vai_agent VAIAgent) interactive_mode() ! {
 	println('\\n' + term_cyan('=== VAI Interactive Mode ==='))
 	println('Type your message and press Enter. Type "quit" to exit.\\n')
 
 	conversation_id := 'cli_${utils.generate_short_id()}'
-	agent.conversations[conversation_id] = protocol.new_conversation(conversation_id)
-	agent.memory_store.create_conversation(conversation_id)!
+	vai_agent.conversations[conversation_id] = protocol.new_conversation(conversation_id)
+	vai_agent.memory_store.create_conversation(conversation_id)!
 
 	for {
 		print(term_green('You: '))
@@ -405,20 +398,20 @@ fn (mut agent VAIAgent) interactive_mode() ! {
 
 		// 处理命令
 		if input.starts_with('/') {
-			msg := new_text_message(input)
+			mut msg := new_text_message(input)
 			msg.sender_id = 'cli_user'
 			msg.platform = 'cli'
-			agent.handle_command(msg, conversation_id)!
+			vai_agent.handle_command(msg, conversation_id)!
 			continue
 		}
 
 		// 添加用户消息
 		user_msg := new_text_message(input)
-		agent.conversations[conversation_id].add_message(user_msg)
-		agent.memory_store.add_message(conversation_id, user_msg)!
+		vai_agent.conversations[conversation_id].add_message(user_msg)
+		vai_agent.memory_store.add_message(conversation_id, user_msg)!
 
 		// 获取 AI 回复
-		response := agent.chat_with_llm(agent.conversations[conversation_id]) or {
+		response := vai_agent.chat_with_llm(vai_agent.conversations[conversation_id]) or {
 			eprintln('Error: ${err}')
 			continue
 		}
@@ -426,38 +419,29 @@ fn (mut agent VAIAgent) interactive_mode() ! {
 		println(term_blue('AI: ') + response)
 
 		// 添加 AI 消息到会话
-		ai_msg := new_text_message(response)
+		mut ai_msg := new_text_message(response)
 		ai_msg.role = protocol.MessageRole.assistant
-		agent.conversations[conversation_id].add_message(ai_msg)
-		agent.memory_store.add_message(conversation_id, ai_msg)!
+		vai_agent.conversations[conversation_id].add_message(ai_msg)
+		vai_agent.memory_store.add_message(conversation_id, ai_msg)!
 	}
 
 	println('\\nGoodbye!')
 }
 
 // 启动 CLI 控制台
-fn (mut agent VAIAgent) start_cli() {
-	mut console := new_cli('vai', agent.version)
+fn (mut vai_agent VAIAgent) start_cli() {
+	mut console := new_cli('vai', vai_agent.version)
 
-	get_status := fn [agent] () StatusInfo {
+	get_status := fn [mut vai_agent] () StatusInfo {
 		return StatusInfo{
-			uptime: time.since(agent.start_time)
-			active_agents: agent.gateway_mgr.adapters.len
-			messages_processed: agent.messages_processed
+			uptime: time.since(vai_agent.start_time)
+			active_agents: vai_agent.gateway_mgr.adapters.len
+			messages_processed: vai_agent.messages_processed
 			memory_usage: 'N/A'  // 需要实现
 		}
 	}
 
-	get_debug_info := fn [agent] () map[string]any {
-		return {
-			'conversations': agent.conversations.len
-			'skills': agent.skills_registry.list().len
-			'gateways': agent.gateway_mgr.adapters.len
-			'providers': agent.llm_mgr.providers.len
-		}
-	}
-
-	register_default_commands(mut console, get_status, get_debug_info)
+	register_default_commands(mut console, get_status)
 	console.run()
 }
 
@@ -507,10 +491,10 @@ fn main() {
 	}
 
 	// 创建 Agent
-	mut agent := new_agent(config)
+	mut vai := new_agent(config)
 
 	// 初始化
-	agent.init() or {
+	vai.init() or {
 		eprintln('Failed to initialize agent: ${err}')
 		exit(1)
 	}
@@ -519,18 +503,18 @@ fn main() {
 	if os.args.len > 1 {
 		match os.args[1] {
 			'chat', 'interactive' {
-				agent.interactive_mode() or {
+				vai.interactive_mode() or {
 					eprintln('Error in interactive mode: ${err}')
 				}
 			}
 			'cli', 'console' {
-				agent.start_cli()
+				vai.start_cli()
 			}
 			'version' {
-				println('VAI v${agent.version}')
+				println('VAI v${vai.version}')
 			}
 			'web', 'server' {
-				start_web_ui(agent)
+				start_web_ui(vai)
 			}
 			'help', '--help', '-h' {
 				show_help()
@@ -544,7 +528,7 @@ fn main() {
 	}
 
 	// 默认启动服务模式
-	agent.start() or {
+	vai.start() or {
 		eprintln('Agent error: ${err}')
 	}
 }
@@ -583,7 +567,7 @@ fn term_red(s string) string { return '\x1b[31m${s}\x1b[0m' }
 fn term_bold(s string) string { return '\x1b[1m${s}\x1b[0m' }
 
 // 启动 Web UI
-fn start_web_ui(agent &VAIAgent) {
+fn start_web_ui(vai_instance &VAIAgent) {
 	// 创建 Agent Hub
 	mut hub := new_hub('main', 'VAI Hub')
 	hub.start() or {
@@ -592,19 +576,19 @@ fn start_web_ui(agent &VAIAgent) {
 	}
 
 	// 创建默认 Agent 并注册
-	if provider := agent.llm_mgr.get_default_provider() {
+	if provider := vai_instance.llm_mgr.get_default_provider() {
 		mut base_agent := new_base_agent(
 			'agent_1',
 			'Assistant',
 			AgentRole.worker,
 			provider,
-			&agent.skills_registry
+			&vai_instance.skills_registry
 		)
 		base_agent.start() or {
 			eprintln('Failed to start agent: ${err}')
 			return
 		}
-		hub.register(base_agent) or {
+		hub.register(mut base_agent) or {
 			eprintln('Failed to register agent: ${err}')
 			return
 		}

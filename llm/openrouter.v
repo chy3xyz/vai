@@ -4,7 +4,6 @@ module llm
 
 import net.http
 import json
-import time
 
 // OpenRouterClient OpenRouter 客户端
 // OpenRouter 是 OpenAI API 的兼容超集，提供额外的路由功能
@@ -13,7 +12,6 @@ pub struct OpenRouterClient {
 	pub mut:
 		site_url      string  // 可选：用于在 OpenRouter 排名中标识来源
 		site_name     string  // 可选：应用名称
-		default_model string = 'openai/gpt-4o-mini'
 }
 
 // OpenRouterRequest OpenRouter API 请求格式
@@ -71,7 +69,7 @@ pub struct OpenRouterResponse {
 // OpenRouterChoice 选择项
 pub struct OpenRouterChoice {
 	pub:
-		logprobs    ?map[string]any     @[json: 'logprobs'; omitempty]
+		logprobs    ?map[string]string  @[json: 'logprobs'; omitempty]
 		finish_reason string            @[json: 'finish_reason']
 		index       int                 @[json: 'index']
 		message     OpenRouterMessage   @[json: 'message']
@@ -121,7 +119,7 @@ pub struct OpenRouterStreamChoice {
 		index        int                    @[json: 'index']
 		delta        OpenRouterMessageDelta   @[json: 'delta']
 		finish_reason ?string                @[json: 'finish_reason']
-		logprobs     ?map[string]any         @[json: 'logprobs'; omitempty]
+		logprobs     ?map[string]string     @[json: 'logprobs'; omitempty]
 }
 
 // OpenRouterMessageDelta 增量消息
@@ -161,7 +159,7 @@ pub struct OpenRouterError {
 	pub:
 		code    ?string @[json: 'code'; omitempty]
 		message string  @[json: 'message']
-		metadata ?map[string]any @[json: 'metadata'; omitempty]
+		metadata ?map[string]string @[json: 'metadata'; omitempty]
 }
 
 // OpenRouterErrorResponse 错误响应包装
@@ -181,21 +179,23 @@ pub struct GenerationStats {
 }
 
 // 创建 OpenRouter 客户端
-pub fn new_openrouter_client(api_key string) OpenRouterClient {
-	return OpenRouterClient{
+pub fn new_openrouter_client(api_key string) &OpenRouterClient {
+	mut client := &OpenRouterClient{
 		BaseClient: new_base_client(api_key, 'https://openrouter.ai/api/v1')
-		default_model: 'openai/gpt-4o-mini'
 	}
+	client.default_model = 'openai/gpt-4o-mini'
+	return client
 }
 
 // 创建带应用信息的 OpenRouter 客户端
-pub fn new_openrouter_client_with_app(api_key string, site_url string, site_name string) OpenRouterClient {
-	return OpenRouterClient{
+pub fn new_openrouter_client_with_app(api_key string, site_url string, site_name string) &OpenRouterClient {
+	mut client := &OpenRouterClient{
 		BaseClient: new_base_client(api_key, 'https://openrouter.ai/api/v1')
 		site_url: site_url
 		site_name: site_name
-		default_model: 'openai/gpt-4o-mini'
 	}
+	client.default_model = 'openai/gpt-4o-mini'
+	return client
 }
 
 // 获取提供商名称
@@ -204,7 +204,7 @@ pub fn (c &OpenRouterClient) name() string {
 }
 
 // 发送补全请求
-pub fn (mut c OpenRouterClient) complete(request CompletionRequest) !CompletionResponse {
+pub fn (c &OpenRouterClient) complete(request CompletionRequest) !CompletionResponse {
 	model := if request.model.len > 0 { request.model } else { c.default_model }
 	
 	mut messages := request.messages.clone()
@@ -212,7 +212,9 @@ pub fn (mut c OpenRouterClient) complete(request CompletionRequest) !CompletionR
 	// 添加系统提示词
 	if system := request.system {
 		if messages.len == 0 || messages[0].role != 'system' {
-			messages = [system_message(system), ...messages]
+			mut new_msgs := [system_message(system)]
+			new_msgs << messages
+			messages = new_msgs.clone()
 		}
 	}
 	
@@ -229,19 +231,25 @@ pub fn (mut c OpenRouterClient) complete(request CompletionRequest) !CompletionR
 	
 	json_body := json.encode(openrouter_req)
 	
-	mut http_req := http.new_request(.post, '${c.base_url}/chat/completions', json_body)
-	http_req.header.add(.content_type, 'application/json')
-	http_req.header.add(.authorization, 'Bearer ${c.api_key}')
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.content_type, 'application/json')
+	header.add(.authorization, 'Bearer ${c.api_key}')
 	
 	// 添加 OpenRouter 特定的 HTTP 头
 	if c.site_url.len > 0 {
-		http_req.header.add_custom('HTTP-Referer', c.site_url)!
+		header.add_custom('HTTP-Referer', c.site_url)!
 	}
 	if c.site_name.len > 0 {
-		http_req.header.add_custom('X-Title', c.site_name)!
+		header.add_custom('X-Title', c.site_name)!
 	}
 	
-	resp := c.http_client.do(http_req)!
+	resp := http.fetch(
+		url: '${c.base_url}/chat/completions'
+		method: .post
+		header: header
+		data: json_body
+	)!
 	
 	if resp.status_code != 200 {
 		// 尝试解析错误响应
@@ -271,14 +279,16 @@ pub fn (mut c OpenRouterClient) complete(request CompletionRequest) !CompletionR
 }
 
 // 发送流式补全请求
-pub fn (mut c OpenRouterClient) complete_stream(request CompletionRequest, callback fn (chunk CompletionChunk)) ! {
+pub fn (c &OpenRouterClient) complete_stream(request CompletionRequest, callback fn (chunk CompletionChunk)) ! {
 	model := if request.model.len > 0 { request.model } else { c.default_model }
 	
 	mut messages := request.messages.clone()
 	
 	if system := request.system {
 		if messages.len == 0 || messages[0].role != 'system' {
-			messages = [system_message(system), ...messages]
+			mut new_msgs := [system_message(system)]
+			new_msgs << messages
+			messages = new_msgs.clone()
 		}
 	}
 	
@@ -293,18 +303,24 @@ pub fn (mut c OpenRouterClient) complete_stream(request CompletionRequest, callb
 	
 	json_body := json.encode(openrouter_req)
 	
-	mut http_req := http.new_request(.post, '${c.base_url}/chat/completions', json_body)
-	http_req.header.add(.content_type, 'application/json')
-	http_req.header.add(.authorization, 'Bearer ${c.api_key}')
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.content_type, 'application/json')
+	header.add(.authorization, 'Bearer ${c.api_key}')
 	
 	if c.site_url.len > 0 {
-		http_req.header.add_custom('HTTP-Referer', c.site_url)!
+		header.add_custom('HTTP-Referer', c.site_url)!
 	}
 	if c.site_name.len > 0 {
-		http_req.header.add_custom('X-Title', c.site_name)!
+		header.add_custom('X-Title', c.site_name)!
 	}
 	
-	resp := c.http_client.do(http_req)!
+	resp := http.fetch(
+		url: '${c.base_url}/chat/completions'
+		method: .post
+		header: header
+		data: json_body
+	)!
 	
 	if resp.status_code != 200 {
 		return error('OpenRouter API error: ${resp.status_code}')
@@ -336,15 +352,20 @@ pub fn (mut c OpenRouterClient) complete_stream(request CompletionRequest, callb
 }
 
 // 获取可用模型列表
-pub fn (mut c OpenRouterClient) list_models() ![]ModelInfo {
-	mut req := http.new_request(.get, '${c.base_url}/models', '')
-	req.header.add(.authorization, 'Bearer ${c.api_key}')
+pub fn (c &OpenRouterClient) list_models() ![]ModelInfo {
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.authorization, 'Bearer ${c.api_key}')
 	
 	if c.site_url.len > 0 {
-		req.header.add_custom('HTTP-Referer', c.site_url)!
+		header.add_custom('HTTP-Referer', c.site_url)!
 	}
 	
-	resp := c.http_client.do(req)!
+	resp := http.fetch(
+		url: '${c.base_url}/models'
+		method: .get
+		header: header
+	)!
 	
 	if resp.status_code != 200 {
 		return error('failed to list models: ${resp.status_code}')
@@ -383,11 +404,16 @@ pub fn (c &OpenRouterClient) count_tokens(text string) int {
 }
 
 // 获取请求的生成统计（OpenRouter 特有功能）
-pub fn (mut c OpenRouterClient) get_generation_stats(generation_id string) !GenerationStats {
-	mut req := http.new_request(.get, '${c.base_url}/generation?id=${generation_id}', '')
-	req.header.add(.authorization, 'Bearer ${c.api_key}')
+pub fn (c &OpenRouterClient) get_generation_stats(generation_id string) !GenerationStats {
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.authorization, 'Bearer ${c.api_key}')
 	
-	resp := c.http_client.do(req)!
+	resp := http.fetch(
+		url: '${c.base_url}/generation?id=${generation_id}'
+		method: .get
+		header: header
+	)!
 	
 	if resp.status_code != 200 {
 		return error('failed to get generation stats: ${resp.status_code}')
@@ -397,11 +423,16 @@ pub fn (mut c OpenRouterClient) get_generation_stats(generation_id string) !Gene
 }
 
 // 获取当前信用余额（OpenRouter 特有功能）
-pub fn (mut c OpenRouterClient) get_credits() !f64 {
-	mut req := http.new_request(.get, '${c.base_url}/credits', '')
-	req.header.add(.authorization, 'Bearer ${c.api_key}')
+pub fn (c &OpenRouterClient) get_credits() !f64 {
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.authorization, 'Bearer ${c.api_key}')
 	
-	resp := c.http_client.do(req)!
+	resp := http.fetch(
+		url: '${c.base_url}/credits'
+		method: .get
+		header: header
+	)!
 	
 	if resp.status_code != 200 {
 		return error('failed to get credits: ${resp.status_code}')

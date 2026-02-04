@@ -1,14 +1,12 @@
-// vai.cli - 本地控制台/调试工具
-// 提供命令行界面和调试功能
+// vai.cli - 本地控制台/调试工具 (简化版)
 module cli
 
 import os
 import term
-import readline
-import json
 import time
 
 // CLI 命令行接口
+@[heap]
 pub struct CLI {
 	pub mut:
 		name           string
@@ -24,13 +22,13 @@ pub interface Command {
 	name() string
 	description() string
 	aliases() []string
-	execute(args []string, ctx Context) !
+	execute(args []string, mut ctx Context) !
 }
 
 // Context 命令上下文
 pub struct Context {
 	pub mut:
-		app_data map[string]any
+		app_data map[string]voidptr
 }
 
 // BaseCommand 基础命令实现
@@ -54,8 +52,8 @@ pub fn (c BaseCommand) aliases() []string {
 }
 
 // 创建 CLI
-pub fn new_cli(name string, version string) CLI {
-	return CLI{
+pub fn new_cli(name string, version string) &CLI {
+	return &CLI{
 		name: name
 		version: version
 		commands: map[string]Command{}
@@ -74,11 +72,11 @@ pub fn (mut c CLI) register(cmd Command) {
 // 运行 CLI
 pub fn (mut c CLI) run() {
 	c.running = true
-
 	c.print_banner()
 
 	for c.running {
-		input := readline.read_line(c.prompt) or { break }
+		print(c.prompt)
+		input := os.input('')
 		line := input.trim_space()
 
 		if line.len == 0 {
@@ -103,17 +101,22 @@ pub fn (mut c CLI) execute(line string) ! {
 
 	if cmd := c.commands[cmd_name] {
 		mut ctx := Context{
-			app_data: map[string]any{}
+			app_data: map[string]voidptr{}
 		}
-		cmd.execute(args, ctx)!
+		cmd.execute(args, mut ctx)!
 	} else {
 		return error('unknown command: ${cmd_name}. Type "help" for available commands.')
 	}
 }
 
 // 停止 CLI
-pub fn (mut c CLI) stop() {
-	c.running = false
+pub fn (c &CLI) stop() {
+	// 使用 unsafe 块来修改 running 状态
+	// 这是因为 Command 接口要求 execute 方法使用不可变接收器
+	unsafe {
+		mut mutable_c := c
+		mutable_c.running = false
+	}
 }
 
 // 打印 Banner
@@ -132,25 +135,24 @@ fn (c &CLI) print_banner() {
 pub struct HelpCommand {
 	BaseCommand
 	pub mut:
-		cli &CLI
+		cli_ptr &CLI
 }
 
-pub fn new_help_command(cli &CLI) HelpCommand {
+pub fn new_help_command(cli_ptr &CLI) HelpCommand {
 	return HelpCommand{
 		BaseCommand: BaseCommand{
 			cmd_name: 'help'
 			cmd_description: 'Show help information'
 			cmd_aliases: ['h', '?']
 		}
-		cli: cli
+		cli_ptr: cli_ptr
 	}
 }
 
-pub fn (c HelpCommand) execute(args []string, ctx Context) ! {
+pub fn (c HelpCommand) execute(args []string, mut ctx Context) ! {
 	if args.len > 0 {
-		// 显示特定命令的帮助
 		cmd_name := args[0]
-		if cmd := c.cli.commands[cmd_name] {
+		if cmd := c.cli_ptr.commands[cmd_name] {
 			println('')
 			println(term.bold('Command: ') + cmd.name())
 			println(term.bold('Description: ') + cmd.description())
@@ -163,13 +165,12 @@ pub fn (c HelpCommand) execute(args []string, ctx Context) ! {
 			return error('unknown command: ${cmd_name}')
 		}
 	} else {
-		// 显示所有命令
 		println('')
 		println(term.bold('Available commands:'))
 		println('')
 
 		mut unique_commands := map[string]Command{}
-		for _, cmd in c.cli.commands {
+		for _, cmd in c.cli_ptr.commands {
 			unique_commands[cmd.name()] = cmd
 		}
 
@@ -187,60 +188,61 @@ pub fn (c HelpCommand) execute(args []string, ctx Context) ! {
 pub struct QuitCommand {
 	BaseCommand
 	pub mut:
-		cli &CLI
+		cli_ptr &CLI
 }
 
-pub fn new_quit_command(cli &CLI) QuitCommand {
+pub fn new_quit_command(cli_ptr &CLI) QuitCommand {
 	return QuitCommand{
 		BaseCommand: BaseCommand{
 			cmd_name: 'quit'
 			cmd_description: 'Exit the CLI'
 			cmd_aliases: ['exit', 'q']
 		}
-		cli: cli
+		cli_ptr: cli_ptr
 	}
 }
 
-pub fn (c QuitCommand) execute(args []string, ctx Context) ! {
+pub fn (c QuitCommand) execute(args []string, mut ctx Context) ! {
 	println('Goodbye!')
-	c.cli.stop()
+	c.cli_ptr.stop()
 }
 
 // VersionCommand 版本命令
 pub struct VersionCommand {
 	BaseCommand
 	pub mut:
-		cli &CLI
+		cli_ptr &CLI
 }
 
-pub fn new_version_command(cli &CLI) VersionCommand {
+pub fn new_version_command(cli_ptr &CLI) VersionCommand {
 	return VersionCommand{
 		BaseCommand: BaseCommand{
 			cmd_name: 'version'
 			cmd_description: 'Show version information'
 			cmd_aliases: ['v']
 		}
-		cli: cli
+		cli_ptr: cli_ptr
 	}
 }
 
-pub fn (c VersionCommand) execute(args []string, ctx Context) ! {
-	println('${c.cli.name} v${c.cli.version}')
+pub fn (c VersionCommand) execute(args []string, mut ctx Context) ! {
+	println('${c.cli_ptr.name} v${c.cli_ptr.version}')
+}
+
+// StatusInfo 状态信息
+pub struct StatusInfo {
+	pub:
+		uptime           time.Duration
+		active_agents  int
+		messages_processed int
+		memory_usage   string
 }
 
 // StatusCommand 状态命令
 pub struct StatusCommand {
 	BaseCommand
 	pub mut:
-		get_status fn () StatusInfo
-}
-
-pub struct StatusInfo {
-	pub:
-		uptime         time.Duration
-		active_agents  int
-		messages_processed int
-		memory_usage   string
+		get_status fn () StatusInfo = unsafe { nil }
 }
 
 pub fn new_status_command(get_status fn () StatusInfo) StatusCommand {
@@ -254,7 +256,7 @@ pub fn new_status_command(get_status fn () StatusInfo) StatusCommand {
 	}
 }
 
-pub fn (c StatusCommand) execute(args []string, ctx Context) ! {
+pub fn (c StatusCommand) execute(args []string, mut ctx Context) ! {
 	status := c.get_status()
 
 	println('')
@@ -263,131 +265,6 @@ pub fn (c StatusCommand) execute(args []string, ctx Context) ! {
 	println('  Active Agents:  ${status.active_agents}')
 	println('  Messages:       ${status.messages_processed}')
 	println('  Memory Usage:   ${status.memory_usage}')
-	println('')
-}
-
-// LogCommand 日志命令
-pub struct LogCommand {
-	BaseCommand
-	pub mut:
-		log_file string
-}
-
-pub fn new_log_command(log_file string) LogCommand {
-	return LogCommand{
-		BaseCommand: BaseCommand{
-			cmd_name: 'logs'
-			cmd_description: 'Show recent logs'
-			cmd_aliases: ['log']
-		}
-		log_file: log_file
-	}
-}
-
-pub fn (c LogCommand) execute(args []string, ctx Context) ! {
-	lines := args.int()
-	if lines <= 0 {
-		lines = 20
-	}
-
-	if !os.exists(c.log_file) {
-		println('No log file found.')
-		return
-	}
-
-	content := os.read_file(c.log_file) or {
-		return error('failed to read log file: ${err}')
-	}
-
-	log_lines := content.split('\n')
-	start := if log_lines.len > lines { log_lines.len - lines } else { 0 }
-
-	println('')
-	println(term.bold('Recent logs:'))
-	println('')
-
-	for line in log_lines[start..] {
-		if line.contains('[ERROR]') {
-			println(term.red(line))
-		} else if line.contains('[WARN]') {
-			println(term.yellow(line))
-		} else if line.contains('[INFO]') {
-			println(term.green(line))
-		} else {
-			println(line)
-		}
-	}
-
-	println('')
-}
-
-// ConfigCommand 配置命令
-pub struct ConfigCommand {
-	BaseCommand
-	pub mut:
-		config_file string
-}
-
-pub fn new_config_command(config_file string) ConfigCommand {
-	return ConfigCommand{
-		BaseCommand: BaseCommand{
-			cmd_name: 'config'
-			cmd_description: 'Show or edit configuration'
-			cmd_aliases: ['cfg']
-		}
-		config_file: config_file
-	}
-}
-
-pub fn (c ConfigCommand) execute(args []string, ctx Context) ! {
-	if args.len == 0 {
-		// 显示配置
-		if os.exists(c.config_file) {
-			content := os.read_file(c.config_file)!
-			println('')
-			println(term.bold('Configuration:'))
-			println(content)
-			println('')
-		} else {
-			println('No configuration file found.')
-		}
-	} else if args[0] == 'edit' {
-		// 打开编辑器编辑配置
-		editor := os.getenv('EDITOR')
-		if editor.len == 0 {
-			editor = 'vi'
-		}
-		os.system('${editor} ${c.config_file}')
-	}
-}
-
-// DebugCommand 调试命令
-pub struct DebugCommand {
-	BaseCommand
-	pub mut:
-		get_debug_info fn () map[string]any
-}
-
-pub fn new_debug_command(get_debug_info fn () map[string]any) DebugCommand {
-	return DebugCommand{
-		BaseCommand: BaseCommand{
-			cmd_name: 'debug'
-			cmd_description: 'Show debug information'
-			cmd_aliases: ['dbg']
-		}
-		get_debug_info: get_debug_info
-	}
-}
-
-pub fn (c DebugCommand) execute(args []string, ctx Context) ! {
-	info := c.get_debug_info()
-
-	println('')
-	println(term.bold('Debug Information:'))
-	println('')
-
-	json_data := json.encode_pretty(info)
-	println(json_data)
 	println('')
 }
 
@@ -406,7 +283,7 @@ pub fn new_clear_command() ClearCommand {
 	}
 }
 
-pub fn (c ClearCommand) execute(args []string, ctx Context) ! {
+pub fn (c ClearCommand) execute(args []string, mut ctx Context) ! {
 	print('\x1b[2J\x1b[H')
 }
 
@@ -425,17 +302,16 @@ pub fn new_echo_command() EchoCommand {
 	}
 }
 
-pub fn (c EchoCommand) execute(args []string, ctx Context) ! {
+pub fn (c EchoCommand) execute(args []string, mut ctx Context) ! {
 	println(args.join(' '))
 }
 
 // 注册默认命令
-pub fn register_default_commands(mut cli CLI, get_status fn () StatusInfo, get_debug_info fn () map[string]any) {
-	cli.register(new_help_command(&cli))
-	cli.register(new_quit_command(&cli))
-	cli.register(new_version_command(&cli))
-	cli.register(new_status_command(get_status))
-	cli.register(new_debug_command(get_debug_info))
-	cli.register(new_clear_command())
-	cli.register(new_echo_command())
+pub fn register_default_commands(mut c CLI, get_status fn () StatusInfo) {
+	c.register(new_help_command(&c))
+	c.register(new_quit_command(&c))
+	c.register(new_version_command(&c))
+	c.register(new_status_command(get_status))
+	c.register(new_clear_command())
+	c.register(new_echo_command())
 }

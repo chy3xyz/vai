@@ -6,8 +6,8 @@ import crypto.md5
 
 // generate_id 生成唯一ID
 pub fn generate_id(prefix string) string {
-	timestamp := time.now().unix_micro
-	random := time.now().nanosecond()
+	timestamp := time.now().unix_micro()
+	random := time.now().nanosecond
 	return '${prefix}_${timestamp}_${random}'
 }
 
@@ -15,7 +15,7 @@ pub fn generate_id(prefix string) string {
 pub fn generate_short_id() string {
 	chars := 'abcdefghijklmnopqrstuvwxyz0123456789'
 	mut result := ''
-	seed := time.now().unix
+	seed := time.now().unix()
 	for i := 0; i < 8; i++ {
 		idx := (seed + i * 31) % chars.len
 		result += chars[idx].ascii_str()
@@ -25,7 +25,7 @@ pub fn generate_short_id() string {
 
 // hash_string 计算字符串 MD5
 pub fn hash_string(s string) string {
-	return md5.sum(s.bytes()).hex()
+	return md5.hexhash(s)
 }
 
 // truncate_string 截断字符串
@@ -60,26 +60,4 @@ pub fn clamp[T](val T, min T, max T) T {
 	return val
 }
 
-// Result 类型
-pub type Result[T] = T | IError
-
-// unwrap 解包 Result
-pub fn (r Result[T]) unwrap() !T {
-	match r {
-		T { return r }
-		IError { return r }
-	}
-}
-
-// is_ok 检查 Result 是否成功
-pub fn (r Result[T]) is_ok() bool {
-	match r {
-		T { return true }
-		IError { return false }
-	}
-}
-
-// is_err 检查 Result 是否失败
-pub fn (r Result[T]) is_err() bool {
-	return !r.is_ok()
-}
+// Result 类型 (简化版 - 使用 V 内置的结果处理)

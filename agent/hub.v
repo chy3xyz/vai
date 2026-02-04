@@ -2,12 +2,13 @@
 // 负责 Agent 注册、发现、消息路由和任务协调
 module agent
 
-import protocol { Message }
+import protocol { Message, new_event_message }
 import sync
 import time
 import json
 
 // AgentHub Agent 协作中心
+@[heap]
 pub struct AgentHub {
 	pub mut:
 		id            string
@@ -79,7 +80,7 @@ pub fn (mut h AgentHub) stop() {
 }
 
 // 注册 Agent
-pub fn (mut h AgentHub) register(agent &BaseAgent) ! {
+pub fn (mut h AgentHub) register(mut ag BaseAgent) ! {
 	h.mu.lock()
 	defer { h.mu.unlock() }
 	
@@ -87,25 +88,25 @@ pub fn (mut h AgentHub) register(agent &BaseAgent) ! {
 		return error('max agents limit reached')
 	}
 	
-	if agent.agent_id in h.agents {
-		return error('agent already registered: ${agent.agent_id}')
+	if ag.agent_id in h.agents {
+		return error('agent already registered: ${ag.agent_id}')
 	}
 	
-	h.agents[agent.agent_id] = agent
+	h.agents[ag.agent_id] = unsafe { ag }
 	
 	// 通知其他 Agent
-	h.broadcast_announce(agent)
+	h.broadcast_announce(mut ag)
 	
-	println('Agent registered: ${agent.agent_name} (${agent.agent_id})')
+	println('Agent registered: ${ag.agent_name} (${ag.agent_id})')
 }
 
 // 注销 Agent
-pub fn (mut h AgentHub) unregister(agent_id string) {
+pub fn (mut h AgentHub) unregister(ag_id string) {
 	h.mu.lock()
 	defer { h.mu.unlock() }
 	
-	h.agents.delete(agent_id)
-	println('Agent unregistered: ${agent_id}')
+	h.agents.delete(ag_id)
+	println('Agent unregistered: ${ag_id}')
 }
 
 // 路由消息
@@ -191,9 +192,9 @@ fn (mut h AgentHub) assign_task(task Task) {
 	
 	// 如果指定了 Agent，直接分配
 	if assigned_to := task.assigned_to {
-		if agent := h.agents[assigned_to] {
-			if agent.agent_status == .idle {
-				spawn h.execute_task_on_agent(task, agent)
+		if mut target_ag := h.agents[assigned_to] {
+			if target_ag.agent_status == .idle {
+				spawn h.execute_task_on_agent(task, mut target_ag)
 				return
 			}
 		}
@@ -203,21 +204,21 @@ fn (mut h AgentHub) assign_task(task Task) {
 	mut best_agent := ?&BaseAgent(none)
 	mut best_score := -1
 	
-	for _, agent in h.agents {
-		if agent.agent_status != .idle {
+	for _, mut candidate in h.agents {
+		if candidate.agent_status != .idle {
 			continue
 		}
 		
 		// 计算匹配分数
-		score := h.calculate_agent_score(agent, task)
+		score := h.calculate_agent_score(mut candidate, task)
 		if score > best_score {
 			best_score = score
-			best_agent = agent
+			best_agent = unsafe { candidate }
 		}
 	}
 	
-	if mut agent := best_agent {
-		spawn h.execute_task_on_agent(task, agent)
+	if mut best_ag := best_agent {
+		spawn h.execute_task_on_agent(task, mut best_ag)
 	} else {
 		// 没有可用 Agent，重新入队
 		time.sleep(1 * time.second)
@@ -226,18 +227,18 @@ fn (mut h AgentHub) assign_task(task Task) {
 }
 
 // 计算 Agent 匹配分数
-fn (h &AgentHub) calculate_agent_score(agent &BaseAgent, task Task) int {
+fn (h &AgentHub) calculate_agent_score(mut ag BaseAgent, task Task) int {
 	mut score := 0
 	
 	// 角色匹配
-	match agent.agent_role {
+	match ag.agent_role {
 		.coordinator { if task.type_ == 'coordination' { score += 10 } }
 		.planner { if task.type_ == 'planning' { score += 10 } }
 		.worker { score += 5 }
 		.specialist { 
 			// 检查专业能力
 			for cap in task.required_caps {
-				if cap in agent.capabilities() {
+				if cap in ag.capabilities() {
 					score += 15
 				}
 			}
@@ -249,13 +250,14 @@ fn (h &AgentHub) calculate_agent_score(agent &BaseAgent, task Task) int {
 }
 
 // 在指定 Agent 上执行任务
-fn (mut h AgentHub) execute_task_on_agent(task Task, mut agent BaseAgent) {
-	result := agent.handle_task(task) or {
+fn (mut h AgentHub) execute_task_on_agent(task Task, mut ag BaseAgent) {
+	mut task_copy := task
+	result := ag.handle_task(mut task_copy) or {
 		TaskResult{
 			task_id: task.id
 			success: false
 			error_msg: err.msg()
-			completed_by: agent.agent_id
+			completed_by: ag.agent_id
 			started_at: time.now()
 			completed_at: time.now()
 		}
@@ -266,7 +268,7 @@ fn (mut h AgentHub) execute_task_on_agent(task Task, mut agent BaseAgent) {
 	h.mu.unlock()
 	
 	// 通知请求者
-	println('Task ${task.id} completed by ${agent.agent_name}')
+	println('Task ${task.id} completed by ${ag.agent_name}')
 }
 
 // 获取任务结果
@@ -284,7 +286,8 @@ fn (mut h AgentHub) heartbeat_checker() {
 		h.mu.lock()
 		now := time.now()
 		
-		for id, mut agent in h.agents {
+		for ag_id, mut ag_info in h.agents {
+			_ := ag_id
 			// 检查 Agent 是否还在线
 			// 简化实现：假设有 last_seen 字段
 		}
@@ -294,13 +297,13 @@ fn (mut h AgentHub) heartbeat_checker() {
 }
 
 // 广播 Agent 上线通知
-fn (mut h AgentHub) broadcast_announce(agent &BaseAgent) {
+fn (mut h AgentHub) broadcast_announce(mut ag BaseAgent) {
 	info := AgentInfo{
-		id: agent.agent_id
-		name: agent.agent_name
-		role: agent.agent_role
-		capabilities: agent.capabilities()
-		status: agent.agent_status
+		id: ag.agent_id
+		name: ag.agent_name
+		role: ag.agent_role
+		capabilities: ag.capabilities()
+		status: ag.agent_status
 		last_seen: time.now()
 	}
 	
@@ -308,22 +311,22 @@ fn (mut h AgentHub) broadcast_announce(agent &BaseAgent) {
 		'agent': json.encode(info)
 	})
 	
-	h.broadcast(agent.agent_id, msg) or {}
+	h.broadcast(ag.agent_id, msg) or {}
 }
 
 // 获取所有 Agent 信息
-pub fn (h &AgentHub) list_agents() []AgentInfo {
+pub fn (mut h AgentHub) list_agents() []AgentInfo {
 	h.mu.rlock()
 	defer { h.mu.runlock() }
 	
 	mut infos := []AgentInfo{}
-	for _, agent in h.agents {
+	for _, mut ag in h.agents {
 		infos << AgentInfo{
-			id: agent.agent_id
-			name: agent.agent_name
-			role: agent.agent_role
-			capabilities: agent.capabilities()
-			status: agent.agent_status
+			id: ag.agent_id
+			name: ag.agent_name
+			role: ag.agent_role
+			capabilities: ag.capabilities()
+			status: ag.agent_status
 			last_seen: time.now()
 		}
 	}
@@ -331,14 +334,14 @@ pub fn (h &AgentHub) list_agents() []AgentInfo {
 }
 
 // 获取特定角色的 Agent
-pub fn (h &AgentHub) get_agents_by_role(role AgentRole) []&BaseAgent {
+pub fn (mut h AgentHub) get_agents_by_role(role AgentRole) []&BaseAgent {
 	h.mu.rlock()
 	defer { h.mu.runlock() }
 	
 	mut agents := []&BaseAgent{}
-	for _, agent in h.agents {
-		if agent.agent_role == role {
-			agents << agent
+	for _, mut ag in h.agents {
+		if ag.agent_role == role {
+			agents << ag
 		}
 	}
 	return agents
@@ -366,7 +369,7 @@ pub fn (mut h AgentHub) create_team(name string, member_ids []string) !AgentTeam
 		id: generate_task_id()
 		name: name
 		members: member_ids
-		hub: &h
+		hub: unsafe { &h }
 	}
 }
 
@@ -395,7 +398,7 @@ pub fn (mut t AgentTeam) distribute_task(task Task, strategy DistributionStrateg
 			// 轮询分配
 			idx := time.now().second % t.members.len
 			target := t.members[idx]
-			t.hub.agents[target] or { return error('agent not found') }
+			_ = t.hub.agents[target] or { return error('agent not found') }
 			t.hub.task_queue <- task
 		}
 		.least_loaded {
@@ -404,9 +407,9 @@ pub fn (mut t AgentTeam) distribute_task(task Task, strategy DistributionStrateg
 			mut target := ''
 			
 			for member_id in t.members {
-				if agent := t.hub.agents[member_id] {
+				if ag_info := t.hub.agents[member_id] {
 					// 简化：使用状态作为负载指标
-					load := if agent.agent_status == .busy { 1 } else { 0 }
+					load := if ag_info.agent_status == .busy { 1 } else { 0 }
 					if load < min_load {
 						min_load = load
 						target = member_id
@@ -418,6 +421,7 @@ pub fn (mut t AgentTeam) distribute_task(task Task, strategy DistributionStrateg
 				t.hub.task_queue <- task
 			}
 		}
+		else {}
 	}
 }
 

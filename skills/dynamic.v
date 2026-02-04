@@ -59,8 +59,8 @@ pub fn (mut l DynamicSkillLoader) scan_and_load() ![]DynamicSkill {
 			continue
 		}
 		
-		skills := l.load_from_directory(dir) or { continue }
-		loaded << skills
+		skills_list := l.load_from_directory(dir) or { continue }
+		loaded << skills_list
 	}
 	
 	return loaded
@@ -68,9 +68,9 @@ pub fn (mut l DynamicSkillLoader) scan_and_load() ![]DynamicSkill {
 
 // 从目录加载技能
 fn (mut l DynamicSkillLoader) load_from_directory(dir string) ![]DynamicSkill {
-	mut skills := []DynamicSkill{}
+	mut skills_list := []DynamicSkill{}
 	
-	entries := os.ls(dir) or { return skills }
+	entries := os.ls(dir) or { return skills_list }
 	
 	for entry in entries {
 		path := os.join_path(dir, entry)
@@ -78,22 +78,22 @@ fn (mut l DynamicSkillLoader) load_from_directory(dir string) ![]DynamicSkill {
 		if entry.ends_with('.skill.json') {
 			// 加载配置式技能
 			skill := l.load_config_skill(path) or { continue }
-			skills << skill
+			skills_list << skill
 			l.loaded_skills[skill.name] = skill
 		}
 		else if entry.ends_with('.v') {
 			// 加载 V 脚本技能
 			skill := l.load_v_script(path) or { continue }
-			skills << skill
+			skills_list << skill
 		}
 		else if entry.ends_with('.py') || entry.ends_with('.js') || entry.ends_with('.sh') {
 			// 加载外部脚本技能
 			skill := l.load_script_skill(path) or { continue }
-			skills << skill
+			skills_list << skill
 		}
 	}
 	
-	return skills
+	return skills_list
 }
 
 // 加载配置式技能
@@ -172,7 +172,7 @@ fn (mut l DynamicSkillLoader) load_script_skill(path string) !DynamicSkill {
 }
 
 // 执行动态技能
-pub fn (l &DynamicSkillLoader) execute(skill DynamicSkill, args map[string]any) !Result {
+pub fn (l &DynamicSkillLoader) execute(skill DynamicSkill, args map[string]Value) !Result {
 	match skill.type_ {
 		.v_script {
 			return l.execute_v_script(skill, args)
@@ -190,11 +190,11 @@ pub fn (l &DynamicSkillLoader) execute(skill DynamicSkill, args map[string]any) 
 }
 
 // 执行 V 脚本
-fn (l &DynamicSkillLoader) execute_v_script(skill DynamicSkill, args map[string]any) !Result {
+fn (l &DynamicSkillLoader) execute_v_script(skill DynamicSkill, args map[string]Value) !Result {
 	start := time.now()
 	
 	// 构建参数
-	mut args_json := json.encode(args)
+	args_json := json.encode(args)
 	
 	// 执行 V 脚本
 	result := os.execute('v run ${skill.source} \'${args_json}\'')
@@ -203,14 +203,14 @@ fn (l &DynamicSkillLoader) execute_v_script(skill DynamicSkill, args map[string]
 	
 	return Result{
 		success: result.exit_code == 0
-		data: result.output
+		data: Value(result.output)
 		error_msg: if result.exit_code != 0 { result.output } else { '' }
 		took_ms: took.milliseconds()
 	}
 }
 
 // 执行外部脚本
-fn (l &DynamicSkillLoader) execute_script(skill DynamicSkill, args map[string]any) !Result {
+fn (l &DynamicSkillLoader) execute_script(skill DynamicSkill, args map[string]Value) !Result {
 	start := time.now()
 	
 	// 构建命令
@@ -218,7 +218,8 @@ fn (l &DynamicSkillLoader) execute_script(skill DynamicSkill, args map[string]an
 	
 	// 添加参数
 	for key, value in args {
-		cmd += ' --${key}="${value}"'
+		val_str := value as string
+		cmd += ' --${key}="${val_str}"'
 	}
 	
 	result := os.execute(cmd)
@@ -227,21 +228,22 @@ fn (l &DynamicSkillLoader) execute_script(skill DynamicSkill, args map[string]an
 	
 	return Result{
 		success: result.exit_code == 0
-		data: result.output
+		data: Value(result.output)
 		error_msg: if result.exit_code != 0 { result.output } else { '' }
 		took_ms: took.milliseconds()
 	}
 }
 
 // 执行可执行文件
-fn (l &DynamicSkillLoader) execute_executable(skill DynamicSkill, args map[string]any) !Result {
+fn (l &DynamicSkillLoader) execute_executable(skill DynamicSkill, args map[string]Value) !Result {
 	start := time.now()
 	
 	mut cmd := skill.source
 	
 	// 添加参数
 	for key, value in args {
-		cmd += ' --${key}="${value}"'
+		val_str := value as string
+		cmd += ' --${key}="${val_str}"'
 	}
 	
 	result := os.execute(cmd)
@@ -250,7 +252,7 @@ fn (l &DynamicSkillLoader) execute_executable(skill DynamicSkill, args map[strin
 	
 	return Result{
 		success: result.exit_code == 0
-		data: result.output
+		data: Value(result.output)
 		error_msg: if result.exit_code != 0 { result.output } else { '' }
 		took_ms: took.milliseconds()
 	}

@@ -6,7 +6,7 @@ import protocol { Message, Conversation, new_text_message, new_event_message }
 import skills { Registry, Skill, SkillContext, Result }
 import memory { Store, MemoryStore, new_memory_store }
 import llm { LLMProvider, CompletionRequest, user_message, system_message, assistant_message }
-import runtime { Scheduler, new_scheduler, background, with_timeout }
+import scheduler { Scheduler, new_scheduler, background, with_timeout }
 import time
 import sync
 import json
@@ -35,7 +35,7 @@ pub interface Agent {
 	role() AgentRole
 	status() AgentStatus
 	capabilities() []string      // 能力列表
-	handle_task(task Task) !TaskResult
+	handle_task(mut task Task) !TaskResult
 	send_message(to string, msg Message) !
 	receive_message() !Message
 }
@@ -74,25 +74,25 @@ pub struct AgentInfo {
 pub struct Task {
 	pub:
 		id          string
-		type_       string           // 任务类型
-		description string           // 任务描述
-		input_data  map[string]any   // 输入数据
-		priority    int              // 优先级
-		deadline    ?time.Time       // 截止时间
-		parent_id   ?string          // 父任务ID（用于子任务）
-		required_caps []string       // 必需的能力
-		assigned_to ?string          // 分配给特定Agent
+		type_       string              // 任务类型
+		description string              // 任务描述
+		input_data  map[string]skills.Value  // 输入数据
+		priority    int                 // 优先级
+		deadline    ?time.Time          // 截止时间
+		parent_id   ?string             // 父任务ID（用于子任务）
+		required_caps []string          // 必需的能力
+		assigned_to ?string             // 分配给特定Agent
 }
 
 // TaskResult 任务结果
 pub struct TaskResult {
 	pub:
-		task_id     string
-		success     bool
-		output      map[string]any
-		error_msg   string
+		task_id      string
+		success      bool
+		output       map[string]skills.Value
+		error_msg    string
 		completed_by string
-		started_at  time.Time
+		started_at   time.Time
 		completed_at time.Time
 }
 
@@ -113,21 +113,22 @@ pub struct AgentMessage {
 		msg_type    MessageType
 		from        string
 		to          string  // 空表示广播
-		payload     json.Any
+		payload     string  // JSON string
 		timestamp   time.Time
 		correlation_id ?string  // 用于请求-响应关联
 }
 
 // 创建基础 Agent
-pub fn new_base_agent(id string, name string, role AgentRole, llm LLMProvider, skills &Registry) &BaseAgent {
+pub fn new_base_agent(id string, name string, role AgentRole, llm_provider LLMProvider, skill_reg &Registry) &BaseAgent {
+	mem_store := new_memory_store()
 	return &BaseAgent{
 		agent_id: id
 		agent_name: name
 		agent_role: role
 		agent_status: .idle
-		skill_registry: skills
-		memory_store: &new_memory_store()
-		llm_provider: llm
+		skill_registry: skill_reg
+		memory_store: &mem_store
+		llm_provider: llm_provider
 		scheduler: new_scheduler(2)
 		inbox: chan Message{cap: 100}
 		outbox: chan Message{cap: 100}
@@ -142,7 +143,7 @@ pub fn (a &BaseAgent) name() string { return a.agent_name }
 pub fn (a &BaseAgent) role() AgentRole { return a.agent_role }
 pub fn (a &BaseAgent) status() AgentStatus { return a.agent_status }
 
-pub fn (a &BaseAgent) capabilities() []string {
+pub fn (mut a BaseAgent) capabilities() []string {
 	mut caps := []string{}
 	for skill in a.skill_registry.list() {
 		caps << skill.name()
@@ -151,7 +152,7 @@ pub fn (a &BaseAgent) capabilities() []string {
 }
 
 // 处理任务
-pub fn (mut a BaseAgent) handle_task(task Task) !TaskResult {
+pub fn (mut a BaseAgent) handle_task(mut task Task) !TaskResult {
 	start_time := time.now()
 	a.agent_status = .busy
 	defer { a.agent_status = .idle }
@@ -182,7 +183,7 @@ Respond with a JSON plan.'
 	mut result := TaskResult{
 		task_id: task.id
 		success: false
-		output: map[string]any{}
+		output: map[string]skills.Value{}
 		error_msg: ''
 		completed_by: a.agent_id
 		started_at: start_time
@@ -238,14 +239,17 @@ pub fn (mut a BaseAgent) send_message(to string, msg Message) ! {
 
 // 接收消息
 pub fn (mut a BaseAgent) receive_message() !Message {
-	select {
-		msg := <-a.inbox {
-			return msg
-		}
-		5 * time.second {
-			return error('receive timeout')
+	for {
+		select {
+			msg := <-a.inbox {
+				return msg
+			}
+			100 * time.millisecond {
+				// continue loop
+			}
 		}
 	}
+	return error('unreachable')
 }
 
 // 启动 Agent
@@ -254,7 +258,7 @@ pub fn (mut a BaseAgent) start() ! {
 	
 	// 向 Hub 注册
 	if mut hub := a.hub {
-		hub.register(a)!
+		hub.register(mut a)!
 	}
 	
 	// 启动消息处理循环
@@ -295,17 +299,18 @@ fn (mut a BaseAgent) process_message(msg Message) {
 				id: generate_task_id()
 				type_: 'generic'
 				description: text[6..]
-				input_data: map[string]any{}
+				input_data: map[string]skills.Value{}
 				priority: 0
 			}
 			
-			result := a.handle_task(task) or {
+			mut task_mut := task
+			result := a.handle_task(mut task_mut) or {
 				eprintln('Task failed: ${err}')
 				return
 			}
 			
 			// 发送结果
-			result_msg := new_text_message('Task ${task.id} completed: ${result.output}')
+			mut result_msg := new_text_message('Task ${task.id} completed: ${result.output}')
 			result_msg.receiver_id = msg.sender_id
 			a.send_message(msg.sender_id, result_msg) or {}
 		}
@@ -314,7 +319,7 @@ fn (mut a BaseAgent) process_message(msg Message) {
 
 // 连接到 Hub
 pub fn (mut a BaseAgent) connect_to_hub(mut hub AgentHub) {
-	a.hub = &hub
+	a.hub = unsafe { &hub }
 }
 
 // 更新对等 Agent 信息
@@ -349,7 +354,7 @@ pub fn (mut a BaseAgent) delegate_task(task Task, target_agent string) !TaskResu
 		msg_type: .task_assign
 		from: a.agent_id
 		to: target_agent
-		payload: json.Any(json.encode(task))
+		payload: json.encode(task)
 		timestamp: time.now()
 	}
 	
@@ -369,14 +374,14 @@ pub fn (mut a BaseAgent) delegate_task(task Task, target_agent string) !TaskResu
 
 // 生成任务 ID
 fn generate_task_id() string {
-	return 'task_${time.now().unix}_${rand_chars(8)}'
+	return 'task_${time.now().unix()}_${rand_chars(8)}'
 }
 
-fn rand_chars(len int) string {
+fn rand_chars(len_ int) string {
 	chars := 'abcdefghijklmnopqrstuvwxyz0123456789'
 	mut result := ''
-	seed := time.now().unix
-	for i := 0; i < len; i++ {
+	seed := time.now().unix()
+	for i := 0; i < len_; i++ {
 		idx := (seed + i * 31) % chars.len
 		result += chars[idx].ascii_str()
 	}

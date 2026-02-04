@@ -4,6 +4,7 @@ module protocol
 
 import json
 import encoding.base64
+import time
 
 // Codec 编码器接口
 pub interface Codec {
@@ -55,12 +56,12 @@ pub enum ProtocolVersion {
 
 // ProtocolHeader 协议头
 pub struct ProtocolHeader {
-	pub:
-		version     ProtocolVersion
-		msg_type    MessageType
-		compression CompressionType
-		encrypted   bool
-		timestamp   i64  // Unix 时间戳
+pub:
+	version     ProtocolVersion
+	msg_type    MessageType
+	compression CompressionType
+	encrypted   bool
+	timestamp   i64 // Unix 时间戳
 }
 
 // CompressionType 压缩类型
@@ -72,22 +73,22 @@ pub enum CompressionType {
 
 // Packet 数据包结构
 pub struct Packet {
-	pub:
-		header  ProtocolHeader
-		payload []u8
+pub:
+	header  ProtocolHeader
+	payload []u8
 }
 
 // 打包消息
 pub fn pack(msg Message, codec Codec, version ProtocolVersion) !Packet {
 	data := codec.encode(msg)!
-	
+
 	return Packet{
-		header: ProtocolHeader{
-			version: version
-			msg_type: msg.msg_type
+		header:  ProtocolHeader{
+			version:     version
+			msg_type:    msg.msg_type
 			compression: .none
-			encrypted: false
-			timestamp: msg.timestamp.unix
+			encrypted:   false
+			timestamp:   msg.timestamp.unix()
 		}
 		payload: data
 	}
@@ -109,20 +110,20 @@ pub fn decode_base64(s string) ![]u8 {
 
 // WebSocketMessage WebSocket 专用消息格式
 pub struct WebSocketMessage {
-	pub:
-		op        string // 操作类型: message, ping, pong, connect, disconnect
-		message_id string
-		data      Message
-		timestamp i64
+pub:
+	op         string // 操作类型: message, ping, pong, connect, disconnect
+	message_id string
+	data       Message
+	timestamp  i64
 }
 
 // 创建 WebSocket 消息
 pub fn new_ws_message(op string, msg Message) WebSocketMessage {
 	return WebSocketMessage{
-		op: op
+		op:         op
 		message_id: generate_message_id()
-		data: msg
-		timestamp: time.now().unix
+		data:       msg
+		timestamp:  time.now().unix()
 	}
 }
 

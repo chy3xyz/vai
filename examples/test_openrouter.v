@@ -9,7 +9,7 @@ fn main() {
 	println('Testing OpenRouter API...')
 	
 	// API Key from dev3.md
-	api_key := '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'
+	api_key := os.getenv('OPENROUTER_API_KEY')
 	
 	// Test 1: List available models
 	println('\n[Test 1] Listing available models...')

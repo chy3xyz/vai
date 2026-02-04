@@ -3,7 +3,6 @@ module llm
 
 import net.http
 import json
-import time
 
 // OllamaClient Ollama 客户端
 pub struct OllamaClient {
@@ -91,17 +90,24 @@ pub struct OllamaModelsResponse {
 		models []OllamaModel @[json: 'models']
 }
 
+// OllamaEmbeddingResponse 嵌入向量响应
+pub struct OllamaEmbeddingResponse {
+	pub:
+		embedding []f64 @[json: 'embedding']
+}
+
 // 创建 Ollama 客户端
-pub fn new_ollama_client() OllamaClient {
+pub fn new_ollama_client() &OllamaClient {
 	return new_ollama_client_with_url('http://localhost:11434')
 }
 
 // 创建指定 URL 的 Ollama 客户端
-pub fn new_ollama_client_with_url(base_url string) OllamaClient {
-	return OllamaClient{
+pub fn new_ollama_client_with_url(base_url string) &OllamaClient {
+	mut client := &OllamaClient{
 		BaseClient: new_base_client('', base_url)
-		default_model: 'llama3.2'
 	}
+	client.default_model = 'llama3.2'
+	return client
 }
 
 // 获取提供商名称
@@ -110,7 +116,7 @@ pub fn (c &OllamaClient) name() string {
 }
 
 // 发送补全请求
-pub fn (mut c OllamaClient) complete(request CompletionRequest) !CompletionResponse {
+pub fn (c &OllamaClient) complete(request CompletionRequest) !CompletionResponse {
 	model := if request.model.len > 0 { request.model } else { c.default_model }
 	
 	mut messages := request.messages.clone()
@@ -118,7 +124,9 @@ pub fn (mut c OllamaClient) complete(request CompletionRequest) !CompletionRespo
 	// 添加系统提示词
 	if system := request.system {
 		if messages.len == 0 || messages[0].role != 'system' {
-			messages = [system_message(system), ...messages]
+			mut new_msgs := [system_message(system)]
+			new_msgs << messages
+			messages = new_msgs.clone()
 		}
 	}
 	
@@ -137,10 +145,16 @@ pub fn (mut c OllamaClient) complete(request CompletionRequest) !CompletionRespo
 	
 	json_body := json.encode(ollama_req)
 	
-	mut http_req := http.new_request(.post, '${c.base_url}/api/chat', json_body)
-	http_req.header.add(.content_type, 'application/json')
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.content_type, 'application/json')
 	
-	resp := c.http_client.do(http_req)!
+	resp := http.fetch(
+		url: '${c.base_url}/api/chat'
+		method: .post
+		header: header
+		data: json_body
+	)!
 	
 	if resp.status_code != 200 {
 		return error('Ollama API error: ${resp.status_code} - ${resp.body}')
@@ -158,14 +172,16 @@ pub fn (mut c OllamaClient) complete(request CompletionRequest) !CompletionRespo
 }
 
 // 发送流式补全请求
-pub fn (mut c OllamaClient) complete_stream(request CompletionRequest, callback fn (chunk CompletionChunk)) ! {
+pub fn (c &OllamaClient) complete_stream(request CompletionRequest, callback fn (chunk CompletionChunk)) ! {
 	model := if request.model.len > 0 { request.model } else { c.default_model }
 	
 	mut messages := request.messages.clone()
 	
 	if system := request.system {
 		if messages.len == 0 || messages[0].role != 'system' {
-			messages = [system_message(system), ...messages]
+			mut new_msgs := [system_message(system)]
+			new_msgs << messages
+			messages = new_msgs.clone()
 		}
 	}
 	
@@ -184,12 +200,16 @@ pub fn (mut c OllamaClient) complete_stream(request CompletionRequest, callback 
 	
 	json_body := json.encode(ollama_req)
 	
-	mut http_req := http.new_request(.post, '${c.base_url}/api/chat', json_body)
-	http_req.header.add(.content_type, 'application/json')
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.content_type, 'application/json')
 	
-	// 简化处理：非流式请求然后分批回调
-	// 实际应该使用真正的流式解析
-	resp := c.http_client.do(http_req)!
+	resp := http.fetch(
+		url: '${c.base_url}/api/chat'
+		method: .post
+		header: header
+		data: json_body
+	)!
 	
 	if resp.status_code != 200 {
 		return error('Ollama API error: ${resp.status_code}')
@@ -218,10 +238,12 @@ pub fn (mut c OllamaClient) complete_stream(request CompletionRequest, callback 
 }
 
 // 获取可用模型列表
-pub fn (mut c OllamaClient) list_models() ![]ModelInfo {
-	mut req := http.new_request(.get, '${c.base_url}/api/tags', '')
-	
-	resp := c.http_client.do(req)!
+pub fn (c &OllamaClient) list_models() ![]ModelInfo {
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	resp := http.fetch(
+		url: '${c.base_url}/api/tags'
+		method: .get
+	)!
 	
 	if resp.status_code != 200 {
 		return error('failed to list models: ${resp.status_code}')
@@ -259,13 +281,19 @@ pub fn (c &OllamaClient) count_tokens(text string) int {
 }
 
 // 拉取模型
-pub fn (mut c OllamaClient) pull_model(model_name string) ! {
+pub fn (c &OllamaClient) pull_model(model_name string) ! {
 	json_body := '{"name": "${model_name}"}'
 	
-	mut http_req := http.new_request(.post, '${c.base_url}/api/pull', json_body)
-	http_req.header.add(.content_type, 'application/json')
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.content_type, 'application/json')
 	
-	resp := c.http_client.do(http_req)!
+	resp := http.fetch(
+		url: '${c.base_url}/api/pull'
+		method: .post
+		header: header
+		data: json_body
+	)!
 	
 	if resp.status_code != 200 {
 		return error('failed to pull model: ${resp.status_code}')
@@ -273,29 +301,32 @@ pub fn (mut c OllamaClient) pull_model(model_name string) ! {
 }
 
 // 生成嵌入向量
-pub fn (mut c OllamaClient) embeddings(model string, prompt string) ![]f32 {
+pub fn (c &OllamaClient) embeddings(model string, prompt string) ![]f32 {
 	json_body := '{"model": "${model}", "prompt": "${prompt}"}'
 	
-	mut http_req := http.new_request(.post, '${c.base_url}/api/embeddings', json_body)
-	http_req.header.add(.content_type, 'application/json')
+	// V 0.5: 使用 http.fetch 代替 http.Client
+	mut header := http.new_header()
+	header.add(.content_type, 'application/json')
 	
-	resp := c.http_client.do(http_req)!
+	resp := http.fetch(
+		url: '${c.base_url}/api/embeddings'
+		method: .post
+		header: header
+		data: json_body
+	)!
 	
 	if resp.status_code != 200 {
 		return error('failed to get embeddings: ${resp.status_code}')
 	}
 	
 	// 解析嵌入向量
-	embeddings_resp := json.decode(map[string]json.Any, resp.body)!
-	embedding := embeddings_resp['embedding'] or { return []f32{} }
+	// V 0.5: 使用具体结构体代替 json.Any
+	embeddings_resp := json.decode(OllamaEmbeddingResponse, resp.body)!
 	
+	// 尝试解析为数组
 	mut result := []f32{}
-	if arr := embedding.arr() {
-		for v in arr {
-			if f := v.f64() {
-				result << f32(f)
-			}
-		}
+	for v in embeddings_resp.embedding {
+		result << f32(v)
 	}
 	
 	return result

@@ -5,7 +5,6 @@ module skills
 import os
 import net.http
 import time
-import json
 import encoding.base64
 
 // FileReadSkill 文件读取技能
@@ -38,7 +37,7 @@ pub fn (s FileReadSkill) parameters() map[string]ParameterSchema {
 			typ: 'string'
 			description: 'File encoding (utf-8, base64)'
 			required: false
-			default_: 'utf-8'
+			default_: Value('utf-8')
 			enum_vals: ['utf-8', 'base64']
 		}
 		'limit': ParameterSchema{
@@ -49,9 +48,12 @@ pub fn (s FileReadSkill) parameters() map[string]ParameterSchema {
 	}
 }
 
-pub fn (s FileReadSkill) execute(args map[string]any, ctx SkillContext) !Result {
-	path := args['path'] or { return error('path is required') }.str()
-	encoding := args['encoding'] or { 'utf-8' }.str()
+pub fn (s FileReadSkill) execute(args map[string]Value, ctx SkillContext) !Result {
+	path_val := args['path'] or { return error('path is required') }
+	path := path_val as string
+	
+	encoding_val := args['encoding'] or { Value('utf-8') }
+	encoding := encoding_val as string
 	
 	// 安全检查：确保路径在工作目录内
 	if !is_safe_path(path, ctx.working_dir) {
@@ -70,7 +72,7 @@ pub fn (s FileReadSkill) execute(args map[string]any, ctx SkillContext) !Result 
 	
 	// 应用限制
 	if limit_val := args['limit'] {
-		limit := limit_val.int()
+		limit := limit_val as i64
 		if content.len > limit {
 			result = content[..limit] + '... [truncated]'
 		}
@@ -82,7 +84,9 @@ pub fn (s FileReadSkill) execute(args map[string]any, ctx SkillContext) !Result 
 	
 	return Result{
 		success: true
-		data: result
+		data: Value(result)
+		error_msg: ''
+		took_ms: 0
 	}
 }
 
@@ -121,15 +125,22 @@ pub fn (s FileWriteSkill) parameters() map[string]ParameterSchema {
 			typ: 'boolean'
 			description: 'Append to file instead of overwriting'
 			required: false
-			default_: false
+			default_: Value(false)
 		}
 	}
 }
 
-pub fn (s FileWriteSkill) execute(args map[string]any, ctx SkillContext) !Result {
-	path := args['path'] or { return error('path is required') }.str()
-	content := args['content'] or { return error('content is required') }.str()
-	append := args['append'] or { false }.bool()
+pub fn (s FileWriteSkill) execute(args map[string]Value, ctx SkillContext) !Result {
+	path_val := args['path'] or { return error('path is required') }
+	path := path_val as string
+	
+	content_val := args['content'] or { return error('content is required') }
+	content := content_val as string
+	
+	mut append := false
+	if append_val := args['append'] {
+		append = append_val as bool
+	}
 	
 	// 安全检查
 	if !is_safe_path(path, ctx.working_dir) {
@@ -137,7 +148,11 @@ pub fn (s FileWriteSkill) execute(args map[string]any, ctx SkillContext) !Result
 	}
 	
 	if append {
-		os.write_file_append(path, content) or {
+		mut existing := ''
+		if os.exists(path) {
+			existing = os.read_file(path) or { '' }
+		}
+		os.write_file(path, existing + content) or {
 			return error('failed to write file: ${err}')
 		}
 	} else {
@@ -148,7 +163,9 @@ pub fn (s FileWriteSkill) execute(args map[string]any, ctx SkillContext) !Result
 	
 	return Result{
 		success: true
-		data: 'File written successfully: ${path}'
+		data: Value('File written successfully: ${path}')
+		error_msg: ''
+		took_ms: 0
 	}
 }
 
@@ -185,14 +202,19 @@ pub fn (s ShellExecuteSkill) parameters() map[string]ParameterSchema {
 			typ: 'number'
 			description: 'Timeout in seconds'
 			required: false
-			default_: 30
+			default_: Value(i64(30))
 		}
 	}
 }
 
-pub fn (s ShellExecuteSkill) execute(args map[string]any, ctx SkillContext) !Result {
-	command := args['command'] or { return error('command is required') }.str()
-	timeout := args['timeout'] or { 30 }.int()
+pub fn (s ShellExecuteSkill) execute(args map[string]Value, ctx SkillContext) !Result {
+	command_val := args['command'] or { return error('command is required') }
+	command := command_val as string
+	
+	mut timeout := 30
+	if timeout_val := args['timeout'] {
+		timeout = int(timeout_val as i64)
+	}
 	
 	// 安全检查：命令白名单
 	if !s.is_allowed(command) {
@@ -208,14 +230,16 @@ pub fn (s ShellExecuteSkill) execute(args map[string]any, ctx SkillContext) !Res
 		return error('command timeout after ${timeout}s')
 	}
 	
+	mut data_map := map[string]Value{}
+	data_map['stdout'] = Value(result.output)
+	data_map['stderr'] = Value('')
+	data_map['exit_code'] = Value(i64(result.exit_code))
+	
 	return Result{
 		success: result.exit_code == 0
-		data: {
-			'stdout': result.output
-			'stderr': ''
-			'exit_code': result.exit_code
-		}
+		data: Value(data_map)
 		error_msg: if result.exit_code != 0 { 'exit code: ${result.exit_code}' } else { '' }
+		took_ms: 0
 	}
 }
 
@@ -265,7 +289,7 @@ pub fn (s HttpRequestSkill) parameters() map[string]ParameterSchema {
 			typ: 'string'
 			description: 'HTTP method'
 			required: false
-			default_: 'GET'
+			default_: Value('GET')
 			enum_vals: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 		}
 		'headers': ParameterSchema{
@@ -281,9 +305,14 @@ pub fn (s HttpRequestSkill) parameters() map[string]ParameterSchema {
 	}
 }
 
-pub fn (s HttpRequestSkill) execute(args map[string]any, ctx SkillContext) !Result {
-	url := args['url'] or { return error('url is required') }.str()
-	method_str := args['method'] or { 'GET' }.str().to_upper()
+pub fn (s HttpRequestSkill) execute(args map[string]Value, ctx SkillContext) !Result {
+	url_val := args['url'] or { return error('url is required') }
+	url := url_val as string
+	
+	mut method_str := 'GET'
+	if method_val := args['method'] {
+		method_str = (method_val as string).to_upper()
+	}
 	
 	// URL 安全检查
 	if !is_safe_url(url) {
@@ -299,34 +328,39 @@ pub fn (s HttpRequestSkill) execute(args map[string]any, ctx SkillContext) !Resu
 		else { http.Method.get }
 	}
 	
-	body := args['body'] or { '' }.str()
-	
-	mut req := http.new_request(method, url, body)
+	mut body := ''
+	if body_val := args['body'] {
+		body = body_val as string
+	}
 	
 	// 设置 headers
+	mut config := http.FetchConfig{
+		url: url
+		method: method
+		data: body
+	}
+	
 	if headers_val := args['headers'] {
-		if headers := headers_val.as_map() {
-			for key, value in headers {
-				req.header.add_custom(key, value.str())!
-			}
+		headers_map := headers_val as map[string]Value
+		for key, value in headers_map {
+			val_str := value as string
+			config.header.add_custom(key, val_str)!
 		}
 	}
 	
-	client := http.Client{
-		timeout: 30 * time.second
-	}
-	
-	resp := client.do(req) or {
+	resp := http.fetch(config) or {
 		return error('HTTP request failed: ${err}')
 	}
 	
+	mut data_map := map[string]Value{}
+	data_map['status_code'] = Value(i64(resp.status_code))
+	data_map['body'] = Value(resp.body)
+	
 	return Result{
 		success: resp.status_code >= 200 && resp.status_code < 300
-		data: {
-			'status_code': resp.status_code
-			'body': resp.body
-			'headers': resp.header
-		}
+		data: Value(data_map)
+		error_msg: ''
+		took_ms: 0
 	}
 }
 
@@ -360,14 +394,16 @@ pub fn (s ListDirectorySkill) parameters() map[string]ParameterSchema {
 			typ: 'boolean'
 			description: 'List recursively'
 			required: false
-			default_: false
+			default_: Value(false)
 		}
 	}
 }
 
-pub fn (s ListDirectorySkill) execute(args map[string]any, ctx SkillContext) !Result {
-	path := args['path'] or { return error('path is required') }.str()
-	recursive := args['recursive'] or { false }.bool()
+pub fn (s ListDirectorySkill) execute(args map[string]Value, ctx SkillContext) !Result {
+	path_val := args['path'] or { return error('path is required') }
+	path := path_val as string
+	
+	_ := args['recursive'] or { Value(false) }
 	
 	// 安全检查
 	if !is_safe_path(path, ctx.working_dir) {
@@ -386,27 +422,29 @@ pub fn (s ListDirectorySkill) execute(args map[string]any, ctx SkillContext) !Re
 		return error('failed to list directory: ${err}')
 	}
 	
-	mut result := []map[string]any{}
+	mut result := []Value{}
 	
 	for entry in entries {
 		full_path := os.join_path(path, entry)
 		is_dir := os.is_dir(full_path)
 		
-		mut item := map[string]any{}
-		item['name'] = entry
-		item['path'] = full_path
-		item['is_dir'] = is_dir
+		mut item := map[string]Value{}
+		item['name'] = Value(entry)
+		item['path'] = Value(full_path)
+		item['is_dir'] = Value(is_dir)
 		
 		if !is_dir {
-			item['size'] = os.file_size(full_path)
+			item['size'] = Value(i64(os.file_size(full_path)))
 		}
 		
-		result << item
+		result << Value(item)
 	}
 	
 	return Result{
 		success: true
-		data: result
+		data: Value(result)
+		error_msg: ''
+		took_ms: 0
 	}
 }
 
@@ -435,37 +473,48 @@ pub fn (s GetCurrentTimeSkill) parameters() map[string]ParameterSchema {
 			typ: 'string'
 			description: 'Timezone (e.g., UTC, Asia/Shanghai)'
 			required: false
-			default_: 'UTC'
+			default_: Value('UTC')
 		}
 		'format': ParameterSchema{
 			typ: 'string'
 			description: 'Time format'
 			required: false
-			default_: 'RFC3339'
+			default_: Value('RFC3339')
 			enum_vals: ['RFC3339', 'unix', 'iso8601']
 		}
 	}
 }
 
-pub fn (s GetCurrentTimeSkill) execute(args map[string]any, ctx SkillContext) !Result {
-	format := args['format'] or { 'RFC3339' }.str()
+pub fn (s GetCurrentTimeSkill) execute(args map[string]Value, ctx SkillContext) !Result {
+	mut format := 'RFC3339'
+	if format_val := args['format'] {
+		format = format_val as string
+	}
 	
 	now := time.now()
 	
 	mut result := ''
 	match format {
-		'unix' { result = now.unix.str() }
+		'unix' { result = now.unix().str() }
 		'iso8601' { result = now.format_rfc3339() }
 		else { result = now.format_rfc3339() }
 	}
 	
+	mut tz := 'UTC'
+	if tz_val := args['timezone'] {
+		tz = tz_val as string
+	}
+	
+	mut data_map := map[string]Value{}
+	data_map['time'] = Value(result)
+	data_map['timestamp'] = Value(now.unix())
+	data_map['timezone'] = Value(tz)
+	
 	return Result{
 		success: true
-		data: {
-			'time': result
-			'timestamp': now.unix
-			'timezone': args['timezone'] or { 'UTC' }.str()
-		}
+		data: Value(data_map)
+		error_msg: ''
+		took_ms: 0
 	}
 }
 

@@ -2,7 +2,7 @@
 // 演示如何使用 vai 框架构建一个简单的聊天机器人
 module main
 
-import runtime { new_scheduler }
+import scheduler { new_scheduler }
 import protocol { new_text_message }
 import gateway { new_telegram_adapter }
 import llm { new_ollama_client, user_message, system_message, CompletionRequest }

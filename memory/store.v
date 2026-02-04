@@ -7,24 +7,26 @@ import json
 import time
 import math
 import crypto.md5
+import sync
 
 // Store 记忆存储接口
 pub interface Store {
 	// 会话管理
-	create_conversation(id string) !Conversation
-	get_conversation(id string) ?Conversation
-	update_conversation(conversation Conversation) !
-	delete_conversation(id string) !
-	list_conversations() []Conversation
-	
-	// 消息存储
-	add_message(conversation_id string, msg Message) !
-	get_messages(conversation_id string, limit int) []Message
-	search_messages(conversation_id string, query string, limit int) []Message
-	
-	// 向量存储
-	store_vector(id string, vector []f32, metadata map[string]any) !
-	search_vectors(query_vector []f32, top_k int) []VectorSearchResult
+	mut:
+		create_conversation(id string) !Conversation
+		get_conversation(id string) ?Conversation
+		update_conversation(conversation Conversation) !
+		delete_conversation(id string) !
+		list_conversations() []Conversation
+		
+		// 消息存储
+		add_message(conversation_id string, msg Message) !
+		get_messages(conversation_id string, limit int) []Message
+		search_messages(conversation_id string, query string, limit int) []Message
+		
+		// 向量存储
+		store_vector(id string, vector []f32, metadata map[string]string) !
+		search_vectors(query_vector []f32, top_k int) []VectorSearchResult
 }
 
 // VectorSearchResult 向量搜索结果
@@ -32,10 +34,11 @@ pub struct VectorSearchResult {
 	pub:
 		id       string
 		score    f32  // 相似度分数
-		metadata map[string]any
+		metadata map[string]string
 }
 
 // MemoryStore 内存存储实现（适合开发和测试）
+@[heap]
 pub struct MemoryStore {
 	pub mut:
 		conversations map[string]Conversation
@@ -43,14 +46,12 @@ pub struct MemoryStore {
 		mu            sync.RwMutex
 }
 
-import sync
-
 // VectorEntry 向量条目
 pub struct VectorEntry {
 	pub:
 		id       string
 		vector   []f32
-		metadata map[string]any
+		metadata map[string]string
 }
 
 // 创建内存存储
@@ -171,7 +172,7 @@ pub fn (mut s MemoryStore) search_messages(conversation_id string, query string,
 }
 
 // 存储向量
-pub fn (mut s MemoryStore) store_vector(id string, vector []f32, metadata map[string]any) ! {
+pub fn (mut s MemoryStore) store_vector(id string, vector []f32, metadata map[string]string) ! {
 	s.mu.lock()
 	defer { s.mu.unlock() }
 	
@@ -187,11 +188,11 @@ pub fn (mut s MemoryStore) search_vectors(query_vector []f32, top_k int) []Vecto
 	s.mu.rlock()
 	defer { s.mu.runlock() }
 	
-	mut scores := []struct {id string score f32}{}
+	mut scores := []VectorScore{}
 	
 	for _, entry in s.vectors {
 		score := cosine_similarity(query_vector, entry.vector)
-		scores << struct {id string score f32}{entry.id, score}
+		scores << VectorScore{entry.id, score}
 	}
 	
 	// 按分数排序（降序）
@@ -215,27 +216,27 @@ pub fn (mut s MemoryStore) search_vectors(query_vector []f32, top_k int) []Vecto
 }
 
 // 余弦相似度计算
-fn cosine_similarity(a []f32, b []f32) f32 {
-	if a.len != b.len || a.len == 0 {
-		return 0.0
-	}
-	
-	mut dot_product := f32(0.0)
-	mut norm_a := f32(0.0)
-	mut norm_b := f32(0.0)
-	
-	for i := 0; i < a.len; i++ {
-		dot_product += a[i] * b[i]
-		norm_a += a[i] * a[i]
-		norm_b += b[i] * b[i]
-	}
-	
-	if norm_a == 0.0 || norm_b == 0.0 {
-		return 0.0
-	}
-	
-	return dot_product / (f32(math.sqrt(f64(norm_a))) * f32(math.sqrt(f64(norm_b))))
-}
+// fn cosine_similarity(a []f32, b []f32) f32 {
+// 	if a.len != b.len || a.len == 0 {
+// 		return 0.0
+// 	}
+// 	
+// 	mut dot_product := f32(0.0)
+// 	mut norm_a := f32(0.0)
+// 	mut norm_b := f32(0.0)
+// 	
+// 	for i := 0; i < a.len; i++ {
+// 		dot_product += a[i] * b[i]
+// 		norm_a += a[i] * a[i]
+// 		norm_b += b[i] * b[i]
+// 	}
+// 	
+// 	if norm_a == 0.0 || norm_b == 0.0 {
+// 		return 0.0
+// 	}
+// 	
+// 	return dot_product / (f32(math.sqrt(f64(norm_a))) * f32(math.sqrt(f64(norm_b))))
+// }
 
 // 导出会话为 JSON
 pub fn (s &MemoryStore) export_conversation(id string) !string {
